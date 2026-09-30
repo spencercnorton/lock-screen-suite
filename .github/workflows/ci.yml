@@ -1,0 +1,64 @@
+# Check and build on every pull request and on main, on the supported Ubuntu
+# 26.04: the source and schema checks, the release invariants, and the zip and
+# .deb built twice and compared byte for byte. No secrets, read-only
+# token, GitHub-owned actions pinned by commit.
+name: CI
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    container: ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Container prerequisites
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates python3 nodejs zip build-essential libglib2.0-bin \
+            debhelper dpkg-dev shellcheck
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tests
+        run: |
+          python3 -m unittest discover -s tests
+          python3 tests/static-check.py
+          glib-compile-schemas --strict --dry-run schemas
+      - name: Shell scripts
+        run: shellcheck scripts/build.sh
+      - name: Build twice and compare
+        run: |
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          scripts/build.sh /tmp/one
+          scripts/build.sh /tmp/two
+          for f in /tmp/one/*; do cmp "$f" "/tmp/two/$(basename "$f")"; done
+          mkdir -p dist/deb dist/zip
+          cp /tmp/one/*.deb dist/deb/
+          cp /tmp/one/*.zip dist/zip/
+          (cd dist/deb && sha256sum *.deb > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnome-shell-extension-lock-screen-suite-debian-candidate
+          path: dist/deb/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: extension-zip
+          path: dist/zip/
+          if-no-files-found: error
+          retention-days: 14

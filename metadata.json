@@ -1,0 +1,19 @@
+{
+    "uuid": "lock-screen-suite@spencercnorton.github.io",
+    "name": "Lock Screen Suite",
+    "description": "Per-monitor lock-screen wallpapers (dim + blur), custom clock layout, and current weather with animated icon.",
+    "shell-version": [
+        "48",
+        "49",
+        "50"
+    ],
+    "session-modes": [
+        "user",
+        "unlock-dialog"
+    ],
+    "url": "https://github.com/spencercnorton/lock-screen-suite",
+    "settings-schema": "org.gnome.shell.extensions.lock-screen-suite",
+    "gettext-domain": "lock-screen-suite",
+    "version": 5,
+    "version-name": "2.0.0"
+}

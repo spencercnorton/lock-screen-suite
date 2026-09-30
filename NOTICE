@@ -1,0 +1,25 @@
+Lock Screen Suite — provenance and third-party notices
+https://github.com/spencercnorton/lock-screen-suite
+
+Origin
+------
+Original work, not a fork.
+
+Artwork
+-------
+The eight weather glyphs in icons/weather/ (bolt, cloud, cloud-dark, fog, moon,
+raindrop, snowflake, sun) were drawn for this project and are licensed
+GPL-3.0-or-later with the rest of the repository. Each is a few lines of
+absolute-integer SVG using <line>, <circle> and short path commands; no
+third-party artwork was used as a source.
+
+Weather data
+------------
+Forecasts and the preferences place search come from Open-Meteo
+(https://open-meteo.com/), whose data is licensed under CC BY 4.0. The
+extension credits it in its preferences.
+
+Licence
+-------
+All files are licensed GPL-3.0-or-later. The full licence text is in LICENSE.
+Copyright 2026 Spencer Norton.

@@ -1,0 +1,7 @@
+gnome-shell-extension-lock-screen-suite (2.0.0) resolute; urgency=medium
+
+  * First public release. The UUID is now
+    lock-screen-suite@spencercnorton.github.io, and the weather location
+    comes only from a place search or coordinates set in the preferences.
+
+ -- Norvi <apt@globalentry.systems>  Wed, 30 Sep 2026 00:00:00 +0000

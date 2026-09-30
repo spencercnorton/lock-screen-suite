@@ -1,0 +1,10 @@
+dist/
+__pycache__/
+*.pyc
+schemas/gschemas.compiled
+debian/.debhelper/
+debian/files
+debian/gnome-shell-extension-lock-screen-suite/
+debian/*.substvars
+debian/*.log
+debian/debhelper-build-stamp

@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.lock-screen-suite"
+          path="/org/gnome/shell/extensions/lock-screen-suite/">
+
+    <!-- Per-monitor wallpapers. Empty string = fall back to default lock wallpaper. -->
+    <key name="wallpaper-monitor-1" type="s">
+      <default>""</default>
+      <summary>Lock wallpaper for monitor 1 (file URI or empty)</summary>
+    </key>
+    <key name="wallpaper-monitor-2" type="s">
+      <default>""</default>
+      <summary>Lock wallpaper for monitor 2 (file URI or empty)</summary>
+    </key>
+    <key name="wallpaper-monitor-3" type="s">
+      <default>""</default>
+      <summary>Lock wallpaper for monitor 3 (file URI or empty)</summary>
+    </key>
+    <key name="wallpaper-monitor-4" type="s">
+      <default>""</default>
+      <summary>Lock wallpaper for monitor 4 (file URI or empty)</summary>
+    </key>
+
+    <key name="wallpaper-blur-radius" type="i">
+      <default>20</default>
+      <range min="0" max="80"/>
+      <summary>Blur radius applied to lock wallpaper</summary>
+    </key>
+    <key name="wallpaper-dim-percent" type="i">
+      <default>35</default>
+      <range min="0" max="80"/>
+      <summary>Dim percent (0 = full brightness, 80 = very dim)</summary>
+    </key>
+
+    <!-- Clock -->
+    <key name="clock-24h" type="b">
+      <default>true</default>
+      <summary>Use 24-hour time</summary>
+    </key>
+    <key name="clock-show-seconds" type="b">
+      <default>true</default>
+      <summary>Show seconds in clock</summary>
+    </key>
+    <key name="clock-show-date" type="b">
+      <default>true</default>
+      <summary>Show date under clock</summary>
+    </key>
+    <key name="clock-font-size" type="i">
+      <default>112</default>
+      <range min="32" max="320"/>
+      <summary>Clock font size in pixels</summary>
+    </key>
+    <key name="clock-font-weight" type="s">
+      <choices>
+        <choice value="300"/>
+        <choice value="400"/>
+        <choice value="500"/>
+        <choice value="600"/>
+        <choice value="700"/>
+      </choices>
+      <default>"300"</default>
+      <summary>Clock font weight (CSS numeric)</summary>
+    </key>
+    <key name="clock-color" type="s">
+      <default>"#ffffff"</default>
+      <summary>Clock and date text color (CSS hex)</summary>
+    </key>
+    <key name="clock-date-format" type="s">
+      <default>"%A, %B %-d"</default>
+      <summary>strftime format for date label</summary>
+    </key>
+    <key name="clock-letter-spacing" type="d">
+      <default>-2.0</default>
+      <range min="-8.0" max="16.0"/>
+      <summary>Letter spacing in pixels for clock</summary>
+    </key>
+
+    <!-- Weather -->
+    <key name="weather-enabled" type="b">
+      <default>true</default>
+      <summary>Show weather widget</summary>
+    </key>
+    <key name="weather-location-name" type="s">
+      <default>""</default>
+      <summary>The place last chosen from the preferences search</summary>
+      <description>Shown in preferences only. The forecast is fetched for
+      weather-latitude and weather-longitude.</description>
+    </key>
+    <key name="weather-latitude" type="d">
+      <default>0.0</default>
+      <range min="-90.0" max="90.0"/>
+      <summary>Latitude for weather</summary>
+    </key>
+    <key name="weather-longitude" type="d">
+      <default>0.0</default>
+      <range min="-180.0" max="180.0"/>
+      <summary>Longitude for weather</summary>
+    </key>
+    <key name="weather-units" type="s">
+      <choices>
+        <choice value="imperial"/>
+        <choice value="metric"/>
+      </choices>
+      <default>"imperial"</default>
+      <summary>Temperature units</summary>
+    </key>
+    <key name="weather-refresh-minutes" type="i">
+      <default>15</default>
+      <range min="5" max="120"/>
+      <summary>How often to fetch weather (minutes)</summary>
+    </key>
+    <key name="weather-show-animation" type="b">
+      <default>true</default>
+      <summary>Animate weather icon</summary>
+    </key>
+    <key name="weather-font-size" type="i">
+      <default>44</default>
+      <range min="12" max="64"/>
+      <summary>Weather text size in pixels</summary>
+    </key>
+    <key name="weather-icon-size" type="i">
+      <default>132</default>
+      <range min="32" max="200"/>
+      <summary>Weather icon size in pixels</summary>
+    </key>
+    <key name="weather-last-payload" type="s">
+      <default>""</default>
+      <summary>Cached last successful weather payload (JSON)</summary>
+    </key>
+    <key name="weather-last-fetch" type="x">
+      <default>0</default>
+      <summary>Unix epoch (seconds) of last successful fetch</summary>
+    </key>
+
+  </schema>
+</schemalist>

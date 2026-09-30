@@ -1,0 +1,20 @@
+/* Lock Screen Suite — minimal extra styles. Most sizing/colour is done
+ * inline by widgets so the user can tweak them from prefs. */
+
+.lss-cluster {
+    spacing: 4px;
+}
+
+.lss-clock {
+    spacing: 0;
+}
+
+.lss-weather {
+    spacing: 0;
+    margin-top: 36px;
+}
+
+.lss-dim-overlay {
+    /* Set via inline style; placeholder so the class exists. */
+    background-color: rgba(0, 0, 0, 0);
+}

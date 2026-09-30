@@ -1,0 +1,3 @@
+*.js metadata.json stylesheet.css usr/share/gnome-shell/extensions/lock-screen-suite@spencercnorton.github.io
+icons/weather/*.svg usr/share/gnome-shell/extensions/lock-screen-suite@spencercnorton.github.io/icons/weather
+schemas/org.gnome.shell.extensions.lock-screen-suite.gschema.xml usr/share/glib-2.0/schemas
