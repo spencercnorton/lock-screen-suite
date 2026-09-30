@@ -24,9 +24,9 @@ export class WeatherService {
         this._settingsHandlers = [
             this._settings.connect('changed::weather-enabled', () => this._reschedule()),
             this._settings.connect('changed::weather-refresh-minutes', () => this._reschedule()),
-            this._settings.connect('changed::weather-latitude', () => this.requestRefresh()),
-            this._settings.connect('changed::weather-longitude', () => this.requestRefresh()),
-            this._settings.connect('changed::weather-units', () => this.requestRefresh()),
+            this._settings.connect('changed::weather-latitude', () => this._refreshSoon()),
+            this._settings.connect('changed::weather-longitude', () => this._refreshSoon()),
+            this._settings.connect('changed::weather-units', () => this._refreshSoon()),
         ];
 
         this._reschedule();
@@ -36,6 +36,10 @@ export class WeatherService {
         if (this._timeoutId) {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = 0;
+        }
+        if (this._soonId) {
+            GLib.source_remove(this._soonId);
+            this._soonId = 0;
         }
         for (const id of this._settingsHandlers)
             this._settings.disconnect(id);
@@ -104,6 +108,19 @@ export class WeatherService {
                 return GLib.SOURCE_REMOVE;
             }
         );
+    }
+
+    // A place is written as latitude, then longitude, then its name, and each
+    // write is its own change. Wait for the set, so a place change costs one
+    // request, for the place as a whole.
+    _refreshSoon() {
+        if (this._soonId)
+            GLib.source_remove(this._soonId);
+        this._soonId = GLib.timeout_add(GLib.PRIORITY_LOW, 500, () => {
+            this._soonId = 0;
+            this.requestRefresh();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     /**

@@ -32,6 +32,7 @@ import Cairo from 'gi://cairo';
 import Pango from 'gi://Pango';
 
 import {describeWmoCode} from './weatherService.js';
+import {screenOn, watchScreen} from './screen.js';
 
 // -- helpers --------------------------------------------------------------
 
@@ -93,50 +94,6 @@ function centre(actor, size, w, h) {
     actor.set_position(Math.round((size - w) / 2), Math.round((size - h) / 2));
 }
 
-// GNOME blanks a locked screen by powering the monitors off, and the unlock
-// dialog stays mapped. A timeline gated on `mapped` alone therefore kept
-// ticking behind dark monitors, and with nothing pacing its frames it ran flat
-// out: more than a CPU core on a blanked lock screen. Mutter publishes the
-// monitors' state only as DisplayConfig's PowerSaveMode over D-Bus (0 = on);
-// its JS API has just a change signal. The proxy is created asynchronously,
-// because a synchronous call would wait on this same process, and it is
-// shared by every running icon and dropped with the last one.
-const DisplayConfigProxy = Gio.DBusProxy.makeProxyWrapper(
-    '<node><interface name="org.gnome.Mutter.DisplayConfig">' +
-    '<property name="PowerSaveMode" type="i" access="readwrite"/>' +
-    '</interface></node>');
-let screen = null;
-
-function screenOn() {
-    const mode = screen?.proxy?.PowerSaveMode;
-    return typeof mode !== 'number' || mode <= 0;   // unknown or -1 (unsupported) counts as on
-}
-
-function watchScreen(listener) {
-    if (!screen) {
-        const s = screen = {proxy: null, changedId: 0, listeners: new Set()};
-        new DisplayConfigProxy(Gio.DBus.session, 'org.gnome.Mutter.DisplayConfig',
-            '/org/gnome/Mutter/DisplayConfig', (proxy, error) => {
-                if (error || screen !== s)
-                    return;
-                s.proxy = proxy;
-                s.changedId = proxy.connect('g-properties-changed',
-                    () => s.listeners.forEach(l => l()));
-                s.listeners.forEach(l => l());
-            }, null, Gio.DBusProxyFlags.DO_NOT_AUTO_START);
-    }
-    const s = screen;
-    s.listeners.add(listener);
-    return () => {
-        s.listeners.delete(listener);
-        if (s.listeners.size > 0 || screen !== s)
-            return;
-        if (s.proxy)
-            s.proxy.disconnect(s.changedId);
-        screen = null;
-    };
-}
-
 function loopSeconds(actor, onTick) {
     // One 60s looping timeline bound to `actor`'s lifetime. Clutter stops and
     // frees the timeline when the actor is destroyed, so there is no explicit
@@ -146,7 +103,14 @@ function loopSeconds(actor, onTick) {
         duration: LOOP_S * 1000,
         repeat_count: -1,
     });
-    timeline.connect('new-frame', () => onTick(timeline.get_progress() * LOOP_S));
+    timeline.connect('new-frame', () => {
+        onTick(timeline.get_progress() * LOOP_S);
+        // Draw every frame the timeline runs. A slow drift that rounds to the
+        // same pixel for several frames leaves nothing to draw, and a frame
+        // with nothing drawn is not paced by the display: the overcast, fog and
+        // storm icons spun the main loop at a full core that way.
+        actor.queue_redraw();
+    });
 
     // Run only while the icon is actually on screen. Two reasons, both real:
     //

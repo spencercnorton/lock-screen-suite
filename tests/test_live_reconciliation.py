@@ -48,12 +48,35 @@ class LiveReconciliationTests(unittest.TestCase):
         self.assertIn("if (actor.mapped && screenOn())", body)
         destroy = body[body.index("actor.connect('destroy'"):]
         self.assertIn("unwatchScreen()", destroy)
-        watch = WEATHER[WEATHER.index("function watchScreen"):]
+        screen = (ROOT / "screen.js").read_text()
+        watch = screen[screen.index("export function watchScreen"):]
         watch = watch[: watch.index("\n}\n")]
         # Asynchronous only: a synchronous proxy would wait on this same process.
         self.assertIn("(proxy, error) =>", watch)
         self.assertIn("'g-properties-changed'", watch)
         self.assertNotIn("_sync(", watch)
+
+    def test_every_running_frame_is_drawn(self) -> None:
+        body = WEATHER[WEATHER.index("function loopSeconds"):]
+        body = body[: body.index("\n}\n")]
+        frame = body[body.index("timeline.connect('new-frame'"):]
+        frame = frame[: frame.index("});")]
+        # A frame with nothing drawn is not paced by the display, so a slow
+        # icon that rounds to the same pixel spun the main loop at a full core.
+        self.assertIn("actor.queue_redraw()", frame)
+
+    def test_the_clock_does_not_redraw_behind_dark_monitors(self) -> None:
+        tick = CLOCK[CLOCK.index("    _scheduleNextTick() {"):]
+        tick = tick[: tick.index("\n    }\n")]
+        self.assertIn("if (screenOn())", tick)
+        self.assertIn("this._unwatchScreen?.()", CLOCK)
+
+    def test_a_place_change_costs_one_request(self) -> None:
+        service = (ROOT / "weatherService.js").read_text()
+        for key in ("weather-latitude", "weather-longitude", "weather-units"):
+            self.assertIn(f"changed::{key}', () => this._refreshSoon()", service)
+        destroy = service[service.index("    destroy() {"):]
+        self.assertIn("GLib.source_remove(this._soonId)", destroy[: destroy.index("\n    }\n")])
 
     def test_a_fetch_restarts_the_refresh_interval(self) -> None:
         service = (ROOT / "weatherService.js").read_text()

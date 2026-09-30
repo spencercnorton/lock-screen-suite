@@ -8,6 +8,8 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Pango from 'gi://Pango';
 
+import {screenOn, watchScreen} from './screen.js';
+
 export const LockClockWidget = GObject.registerClass(
 class LockClockWidget extends St.BoxLayout {
     _init(settings) {
@@ -55,6 +57,10 @@ class LockClockWidget extends St.BoxLayout {
         this._refresh();
         this._scheduleNextTick();
 
+        this._unwatchScreen = watchScreen(() => {
+            if (screenOn())
+                this._refresh();
+        });
         this.connect('destroy', () => this._onDestroy());
     }
 
@@ -128,7 +134,9 @@ class LockClockWidget extends St.BoxLayout {
             GLib.PRIORITY_DEFAULT,
             periodSec,
             () => {
-                this._refresh();
+                // Nothing to show behind dark monitors; waking redraws at once.
+                if (screenOn())
+                    this._refresh();
                 // If the user toggled show-seconds we may need to switch cadence.
                 const wantSeconds = this._settings.get_boolean('clock-show-seconds');
                 if (wantSeconds !== showSeconds) {
@@ -142,6 +150,8 @@ class LockClockWidget extends St.BoxLayout {
     }
 
     _onDestroy() {
+        this._unwatchScreen?.();
+        this._unwatchScreen = null;
         if (this._timeoutId) {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = 0;
