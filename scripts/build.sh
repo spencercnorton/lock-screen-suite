@@ -26,8 +26,10 @@ find "$stage" -exec touch -h -d "@$stamp" {} +
 (cd "$stage" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | TZ=UTC zip -qX "$out/lock-screen-suite.shell-extension.zip" -@)
 
 (cd "$root" && dpkg-buildpackage -us -uc -b)
+# No grep -q below: it exits at the first match, dpkg-deb dies of SIGPIPE, and
+# pipefail turns a good package into a failed build.
 mv "$root/../${pkg}_${version}_all.deb" "$out/"
 rm -f "$root/../${pkg}_${version}"_*.buildinfo "$root/../${pkg}_${version}"_*.changes
-dpkg-deb -c "$out/${pkg}_${version}_all.deb" | grep -q "usr/share/gnome-shell/extensions/$uuid/extension.js"
-dpkg-deb -c "$out/${pkg}_${version}_all.deb" | grep -q "usr/share/glib-2.0/schemas/org.gnome.shell.extensions.lock-screen-suite.gschema.xml"
+dpkg-deb -c "$out/${pkg}_${version}_all.deb" | grep -F "usr/share/gnome-shell/extensions/$uuid/extension.js" >/dev/null
+dpkg-deb -c "$out/${pkg}_${version}_all.deb" | grep -F "usr/share/glib-2.0/schemas/org.gnome.shell.extensions.lock-screen-suite.gschema.xml" >/dev/null
 ls -l "$out"
