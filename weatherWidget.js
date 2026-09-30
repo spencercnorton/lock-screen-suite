@@ -93,6 +93,50 @@ function centre(actor, size, w, h) {
     actor.set_position(Math.round((size - w) / 2), Math.round((size - h) / 2));
 }
 
+// GNOME blanks a locked screen by powering the monitors off, and the unlock
+// dialog stays mapped. A timeline gated on `mapped` alone therefore kept
+// ticking behind dark monitors, and with nothing pacing its frames it ran flat
+// out: more than a CPU core on a blanked lock screen. Mutter publishes the
+// monitors' state only as DisplayConfig's PowerSaveMode over D-Bus (0 = on);
+// its JS API has just a change signal. The proxy is created asynchronously,
+// because a synchronous call would wait on this same process, and it is
+// shared by every running icon and dropped with the last one.
+const DisplayConfigProxy = Gio.DBusProxy.makeProxyWrapper(
+    '<node><interface name="org.gnome.Mutter.DisplayConfig">' +
+    '<property name="PowerSaveMode" type="i" access="readwrite"/>' +
+    '</interface></node>');
+let screen = null;
+
+function screenOn() {
+    const mode = screen?.proxy?.PowerSaveMode;
+    return typeof mode !== 'number' || mode <= 0;   // unknown or -1 (unsupported) counts as on
+}
+
+function watchScreen(listener) {
+    if (!screen) {
+        const s = screen = {proxy: null, changedId: 0, listeners: new Set()};
+        new DisplayConfigProxy(Gio.DBus.session, 'org.gnome.Mutter.DisplayConfig',
+            '/org/gnome/Mutter/DisplayConfig', (proxy, error) => {
+                if (error || screen !== s)
+                    return;
+                s.proxy = proxy;
+                s.changedId = proxy.connect('g-properties-changed',
+                    () => s.listeners.forEach(l => l()));
+                s.listeners.forEach(l => l());
+            }, null, Gio.DBusProxyFlags.DO_NOT_AUTO_START);
+    }
+    const s = screen;
+    s.listeners.add(listener);
+    return () => {
+        s.listeners.delete(listener);
+        if (s.listeners.size > 0 || screen !== s)
+            return;
+        if (s.proxy)
+            s.proxy.disconnect(s.changedId);
+        screen = null;
+    };
+}
+
 function loopSeconds(actor, onTick) {
     // One 60s looping timeline bound to `actor`'s lifetime. Clutter stops and
     // frees the timeline when the actor is destroyed, so there is no explicit
@@ -110,16 +154,17 @@ function loopSeconds(actor, onTick) {
     // eagerly trips clutter_timeline_start's "actor has no stage" check and the
     // animation silently never runs.
     //
-    // And the unlock dialog stays alive but unmapped while the screen is
-    // blanked -- a 60fps timeline behind a blank screen is pure idle draw on a
-    // machine that sits locked for hours. pause()/start() resumes in place.
+    // And a 60fps timeline behind a blank screen is pure idle draw on a
+    // machine that sits locked for hours, so it also pauses while the monitors
+    // are powered off (see watchScreen). pause()/start() resumes in place.
     const sync = () => {
-        if (actor.mapped)
+        if (actor.mapped && screenOn())
             timeline.start();
         else
             timeline.pause();
     };
     const mappedId = actor.connect('notify::mapped', sync);
+    const unwatchScreen = watchScreen(sync);
     sync();
 
     // Stop it explicitly when the icon goes away. `Clutter.Timeline({actor})`
@@ -133,6 +178,7 @@ function loopSeconds(actor, onTick) {
     // timeline every 15 minutes, for the life of the session.
     actor.connect('destroy', () => {
         actor.disconnect(mappedId);
+        unwatchScreen();
         timeline.stop();
     });
 

@@ -29,7 +29,7 @@ class LiveReconciliationTests(unittest.TestCase):
         body = body[: body.index("\n}\n")]
 
         # Starts only once the icon has a stage, pauses while it is unmapped.
-        self.assertLess(body.index("if (actor.mapped)"), body.index("timeline.start()"))
+        self.assertLess(body.index("if (actor.mapped && screenOn())"), body.index("timeline.start()"))
         self.assertIn("timeline.pause()", body)
         self.assertIn("actor.connect('notify::mapped'", body)
         # Stops when the icon is destroyed. A timeline left running ticks into
@@ -39,6 +39,26 @@ class LiveReconciliationTests(unittest.TestCase):
         self.assertIn("actor.disconnect(mappedId)", destroy)
         # Rooted on the actor, so GJS does not collect it mid-animation.
         self.assertIn("actor._lssTimeline = timeline", body)
+
+    def test_icon_timeline_pauses_while_the_monitors_are_off(self) -> None:
+        body = WEATHER[WEATHER.index("function loopSeconds"):]
+        body = body[: body.index("\n}\n")]
+        # The unlock dialog stays mapped while GNOME blanks the screen, so
+        # `mapped` alone kept a timeline running flat out behind dark monitors.
+        self.assertIn("if (actor.mapped && screenOn())", body)
+        destroy = body[body.index("actor.connect('destroy'"):]
+        self.assertIn("unwatchScreen()", destroy)
+        watch = WEATHER[WEATHER.index("function watchScreen"):]
+        watch = watch[: watch.index("\n}\n")]
+        # Asynchronous only: a synchronous proxy would wait on this same process.
+        self.assertIn("(proxy, error) =>", watch)
+        self.assertIn("'g-properties-changed'", watch)
+        self.assertNotIn("_sync(", watch)
+
+    def test_a_fetch_restarts_the_refresh_interval(self) -> None:
+        service = (ROOT / "weatherService.js").read_text()
+        fetch = service[service.index("set_int64('weather-last-fetch'"):]
+        self.assertLess(fetch.index("this._reschedule()"), fetch.index("this._emit(payload)"))
 
     def test_a_replaced_icon_is_destroyed(self) -> None:
         body = WEATHER[WEATHER.index("    _refreshIcon() {"):]

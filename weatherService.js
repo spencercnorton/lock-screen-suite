@@ -244,6 +244,9 @@ export class WeatherService {
 
         this._settings.set_string('weather-last-payload', JSON.stringify(payload));
         this._settings.set_int64('weather-last-fetch', payload.fetchedAt);
+        // Count the next periodic refresh from this fetch, so a fetch for a new
+        // place is not followed by the timer's one a few minutes later.
+        this._reschedule();
         this._emit(payload);
     }
 }
