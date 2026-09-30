@@ -77,6 +77,14 @@ class LiveReconciliationTests(unittest.TestCase):
             self.assertIn(f"changed::{key}', () => this._refreshSoon()", service)
         destroy = service[service.index("    destroy() {"):]
         self.assertIn("GLib.source_remove(this._soonId)", destroy[: destroy.index("\n    }\n")])
+        soon = service[service.index("    _refreshSoon() {"):]
+        soon = soon[: soon.index("\n    }\n")]
+        # A coordinate written back rounded to the displayed decimals is the
+        # same place: only a changed place or units may fetch.
+        self.assertIn("this.requestRefresh({ifStale: true})", soon)
+
+    def test_the_clock_is_right_on_the_first_frame_after_wake(self) -> None:
+        self.assertIn("'power-save-mode-changed', () => this._refresh(), this", CLOCK)
 
     def test_a_fetch_restarts_the_refresh_interval(self) -> None:
         service = (ROOT / "weatherService.js").read_text()

@@ -112,13 +112,15 @@ export class WeatherService {
 
     // A place is written as latitude, then longitude, then its name, and each
     // write is its own change. Wait for the set, so a place change costs one
-    // request, for the place as a whole.
+    // request, for the place as a whole. `ifStale` compares the cached
+    // forecast's place and units: a real change fetches, while preferences
+    // writing back a coordinate rounded to its four displayed decimals does not.
     _refreshSoon() {
         if (this._soonId)
             GLib.source_remove(this._soonId);
         this._soonId = GLib.timeout_add(GLib.PRIORITY_LOW, 500, () => {
             this._soonId = 0;
-            this.requestRefresh();
+            this.requestRefresh({ifStale: true});
             return GLib.SOURCE_REMOVE;
         });
     }

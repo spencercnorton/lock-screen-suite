@@ -61,6 +61,10 @@ class LockClockWidget extends St.BoxLayout {
             if (screenOn())
                 this._refresh();
         });
+        // Mutter's own signal arrives before the D-Bus property change, so the
+        // first frame after the monitors wake already shows the right time.
+        global.backend.get_monitor_manager().connectObject(
+            'power-save-mode-changed', () => this._refresh(), this);
         this.connect('destroy', () => this._onDestroy());
     }
 
