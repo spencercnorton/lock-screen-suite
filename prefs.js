@@ -322,6 +322,14 @@ export default class LockScreenSuitePrefs extends ExtensionPreferences {
             uri: 'https://open-meteo.com/', label: 'open-meteo.com', valign: Gtk.Align.CENTER,
         }));
         credit.add(source);
+        const licence = new Adw.ActionRow({
+            title: 'Licence',
+            subtitle: 'Creative Commons Attribution 4.0 International',
+        });
+        licence.add_suffix(new Gtk.LinkButton({
+            uri: 'https://creativecommons.org/licenses/by/4.0/', label: 'CC BY 4.0', valign: Gtk.Align.CENTER,
+        }));
+        credit.add(licence);
         page.add(credit);
 
         return page;

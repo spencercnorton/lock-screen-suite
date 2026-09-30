@@ -115,7 +115,7 @@
     </key>
     <key name="weather-font-size" type="i">
       <default>44</default>
-      <range min="12" max="64"/>
+      <range min="12" max="128"/>
       <summary>Weather text size in pixels</summary>
     </key>
     <key name="weather-icon-size" type="i">

@@ -155,8 +155,9 @@ export class LockScreenCustomizer {
         const safePath = path.replace(/"/g, '\\"');
         bg.set_style(
             `background-image: url("${safePath}");` +
-            'background-size: cover;' +
-            'background-position: center center;'
+            // St centres a background by default and rejects the keyword form
+            // of background-position, so none is set.
+            'background-size: cover;'
         );
 
         // Dim shade overlay — a separate child so dim is independent of the
@@ -305,11 +306,8 @@ export class LockScreenCustomizer {
                 }
             }
         }
-        // Weather location/key/units changes: force a refresh.
-        if (key.startsWith('weather-') && key !== 'weather-last-payload' &&
-            key !== 'weather-last-fetch') {
-            this._weatherService?.requestRefresh();
-        }
+        // The weather service refetches on its own when the place, units,
+        // interval or enabled state change; styling keys need no request.
         // Clock/weather widget re-styling is handled inside the widgets via
         // their own settings change handlers.
     }

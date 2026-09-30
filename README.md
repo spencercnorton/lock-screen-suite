@@ -28,7 +28,7 @@ Lock Screen Suite restyles GNOME Shell's unlock dialog without replacing it: GNO
 
 **Its own clock.** Twelve- or 24-hour time with optional seconds and date, in the size, weight, colour, letter spacing and date format you choose.
 
-**The current weather.** Temperature and conditions with an animated icon, refreshed on an interval you set, from [Open-Meteo](https://open-meteo.com/). The last result is cached, so the lock screen has something to show as soon as the machine wakes.
+**The current weather.** Temperature and conditions with an animated icon, refreshed on an interval you set, from [Open-Meteo](https://open-meteo.com/). At night the icon shows the moon at its current phase. The last result is cached, so the lock screen has something to show as soon as the machine wakes, and locking again within the interval makes no new request. The weather appears once you have chosen a place.
 
 **Your location stays yours.** The weather is fetched only for a place you pick from a search in the preferences, or for latitude and longitude you enter. The extension never looks your location up by itself, and the lock screen makes no request other than the forecast.
 

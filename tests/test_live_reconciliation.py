@@ -24,25 +24,44 @@ class LiveReconciliationTests(unittest.TestCase):
                     f"{label} can regress to truncating its final glyph",
                 )
 
-    def test_icon_timeline_waits_until_the_actor_is_mapped(self) -> None:
-        body = WEATHER[WEATHER.index("function loopAdjustment"):]
-        body = body[: body.index("// -- icon factories")]
+    def test_icon_timeline_lives_exactly_as_long_as_its_icon(self) -> None:
+        body = WEATHER[WEATHER.index("function loopSeconds"):]
+        body = body[: body.index("\n}\n")]
 
-        mapped_guard = body.index("if (actor.mapped)")
-        first_start = body.index("timeline.start()")
-        self.assertLess(
-            mapped_guard,
-            first_start,
-            "the timeline must not start before its actor has a stage",
-        )
+        # Starts only once the icon has a stage, pauses while it is unmapped.
+        self.assertLess(body.index("if (actor.mapped)"), body.index("timeline.start()"))
+        self.assertIn("timeline.pause()", body)
         self.assertIn("actor.connect('notify::mapped'", body)
-        self.assertIn("actor.disconnect(id)", body)
-        self.assertEqual(
-            body.count("timeline.start()"),
-            2,
-            "both the already-mapped and deferred paths must start exactly once",
-        )
+        # Stops when the icon is destroyed. A timeline left running ticks into
+        # disposed St.Icons and floods the journal on every lock.
+        destroy = body[body.index("actor.connect('destroy'"):]
+        self.assertIn("timeline.stop()", destroy)
+        self.assertIn("actor.disconnect(mappedId)", destroy)
+        # Rooted on the actor, so GJS does not collect it mid-animation.
+        self.assertIn("actor._lssTimeline = timeline", body)
 
+    def test_a_replaced_icon_is_destroyed(self) -> None:
+        body = WEATHER[WEATHER.index("    _refreshIcon() {"):]
+        body = body[: body.index("\n    }\n")]
+        self.assertIn("old?.destroy()", body)
+
+    def test_no_weather_row_until_a_place_is_chosen(self) -> None:
+        body = WEATHER[WEATHER.index("    _onEnabledChanged() {"):]
+        body = body[: body.index("\n    }\n")]
+        self.assertIn("hasPlace()", body)
+        self.assertIn("changed::weather-latitude", WEATHER)
+
+    def test_a_rebuilt_widget_uses_a_fresh_cached_forecast(self) -> None:
+        self.assertIn("requestRefresh({ifStale: true})", WEATHER)
+        service = (ROOT / "weatherService.js").read_text()
+        self.assertIn("if (ifStale && this._isFresh())", service)
+        self.assertIn("cached.place !== this._placeKey()", service)
+        lock = (ROOT / "lockScreen.js").read_text()
+        self.assertNotIn("requestRefresh()", lock, "styling keys must not cost a request")
+
+    def test_background_position_uses_st_default(self) -> None:
+        lock = (ROOT / "lockScreen.js").read_text()
+        self.assertNotIn("background-position", lock.replace("of background-position", ""))
 
 if __name__ == "__main__":
     unittest.main()

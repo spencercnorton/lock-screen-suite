@@ -106,8 +106,16 @@ export class WeatherService {
         );
     }
 
-    requestRefresh() {
+    /**
+     * Fetch the current weather. With `ifStale`, a cached forecast for the
+     * same place and units that is younger than the refresh interval is
+     * enough: the lock screen rebuilds its widgets on every lock, and each
+     * rebuild must not cost a request.
+     */
+    requestRefresh({ifStale = false} = {}) {
         if (!this._settings.get_boolean('weather-enabled'))
+            return;
+        if (ifStale && this._isFresh())
             return;
         if (this._inFlight) {
             // Mark dirty so the in-flight loop re-fetches with the latest
@@ -151,6 +159,26 @@ export class WeatherService {
     _coordinatesUnset() {
         return this._settings.get_user_value('weather-latitude') === null &&
                this._settings.get_user_value('weather-longitude') === null;
+    }
+
+    /** True once the user has chosen a place; the widget shows only then. */
+    hasPlace() {
+        return !this._coordinatesUnset();
+    }
+
+    _placeKey() {
+        const lat = this._settings.get_double('weather-latitude');
+        const lon = this._settings.get_double('weather-longitude');
+        return `${lat.toFixed(4)},${lon.toFixed(4)},${this._settings.get_string('weather-units')}`;
+    }
+
+    _isFresh() {
+        const cached = this.getCachedPayload();
+        if (!cached || cached.place !== this._placeKey())
+            return false;
+        const periodSec = Math.max(5, this._settings.get_int('weather-refresh-minutes')) * 60;
+        const age = Math.floor(Date.now() / 1000) - Number(this._settings.get_int64('weather-last-fetch'));
+        return age >= 0 && age < periodSec;
     }
 
     async _fetch(lat, lon) {
@@ -199,6 +227,9 @@ export class WeatherService {
         const current = json.current || {};
         const payload = {
             fetchedAt: Math.floor(Date.now() / 1000),
+            // The place and units this forecast is for, so a cached one is
+            // never shown as fresh for a different place.
+            place: `${lat.toFixed(4)},${lon.toFixed(4)},${units}`,
             tempUnit: tempUnit === 'celsius' ? '°C' : '°F',
             windUnit,
             temperature: current.temperature_2m,

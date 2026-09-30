@@ -8,6 +8,8 @@ The first public release.
 
 - A lock-screen wallpaper per monitor with blur and dim, a configurable clock, and the current weather with an animated icon.
 - The weather location comes only from a place search in preferences or coordinates you enter. The automatic IP lookup is gone, and so is its setting.
-- Open-Meteo is credited in preferences for the forecasts and the place search.
-- Self-sized clock and weather labels never drop their last glyph, and the icon animations start only once they are on screen.
+- The weather row appears only once a place is chosen, and a lock within the refresh interval reuses the cached forecast instead of fetching again.
+- Open-Meteo is credited in preferences for the forecasts and the place search, with a link to the CC BY 4.0 licence.
+- Eased icon animations, and a moon drawn at its real phase. Each animation runs only while its icon is on screen, pauses while the screen is blank, and stops when the icon is replaced.
+- Self-sized clock and weather labels never drop their last glyph.
 - The UUID is `lock-screen-suite@spencercnorton.github.io`.
