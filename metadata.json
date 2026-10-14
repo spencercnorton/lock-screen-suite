@@ -15,5 +15,5 @@
     "settings-schema": "org.gnome.shell.extensions.lock-screen-suite",
     "gettext-domain": "lock-screen-suite",
     "version": 5,
-    "version-name": "2.0.0"
+    "version-name": "2.1.0"
 }
