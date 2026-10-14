@@ -1,3 +1,10 @@
+gnome-shell-extension-lock-screen-suite (2.1.1) resolute; urgency=medium
+
+  * Packaging fix: add the missing debian/changelog entry required by the
+    release pipeline. No functional change from 2.1.0.
+
+ -- Norvi <apt@globalentry.systems>  Wed, 14 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-lock-screen-suite (2.1.0) resolute; urgency=medium
 
   * Replace the centered animated weather icon with a full-screen ambient
