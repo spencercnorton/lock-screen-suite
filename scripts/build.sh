@@ -18,8 +18,7 @@ mkdir -p "$out"
 
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
 cp "$root"/*.js "$root/metadata.json" "$root/stylesheet.css" "$stage/"
-mkdir -p "$stage/icons/weather" "$stage/schemas"
-cp "$root"/icons/weather/*.svg "$stage/icons/weather/"
+mkdir -p "$stage/schemas"
 cp "$root"/schemas/*.gschema.xml "$stage/schemas/"
 glib-compile-schemas "$stage/schemas"
 find "$stage" -exec touch -h -d "@$stamp" {} +
