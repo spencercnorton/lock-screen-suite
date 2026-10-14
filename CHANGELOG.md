@@ -2,6 +2,13 @@
 
 All notable changes to Lock Screen Suite are documented here.
 
+## Unreleased
+
+- The animated weather icon is replaced by a full-screen atmosphere: rain slanted by the real wind, drifting snow, ground fog, clouds and their shadows, and a starfield with the moon at its real phase, across every monitor between the blurred wallpaper and the clock.
+- Stars, the moon, sun glow, and clouds are placed only in sky detected in the wallpaper itself, computed once per wallpaper and cached; a wallpaper with no visible sky gets no stars on its trees. Night scenes dim the wallpaper by an amount measured from that sky.
+- The weather row is now a slim line — symbolic icon, temperature, condition, and today's high and low (one extra field in the same Open-Meteo request, along with the wind direction the fetch always asked for but never stored).
+- The wallpaper is graded per condition on top of your own blur and dim settings (cooler for rain, softer for fog), the atmosphere quiets while the password prompt is up, and density, grading, and lightning each have their own switch. The bundled weather artwork is gone; the icon is the theme's symbolic one.
+
 ## 2.0.0 — 2026-09-30
 
 The first public release.

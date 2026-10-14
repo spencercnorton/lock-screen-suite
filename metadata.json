@@ -1,7 +1,7 @@
 {
     "uuid": "lock-screen-suite@spencercnorton.github.io",
     "name": "Lock Screen Suite",
-    "description": "Per-monitor lock-screen wallpapers (dim + blur), custom clock layout, and current weather with animated icon.",
+    "description": "Per-monitor lock-screen wallpapers (dim + blur), custom clock layout, and an immersive full-screen weather atmosphere placed against sky detected in the wallpaper.",
     "shell-version": [
         "48",
         "49",

@@ -10,6 +10,9 @@
 //     existing clock BoxLayout. Keeping our widgets parented to the original
 //     _clock means we inherit show/hide behaviour from _showClock / _showPrompt /
 //     _setTransitionProgress automatically — no need to patch any of those.
+//   * Insert the weather atmosphere (atmosphere.js) as its own layer between
+//     _backgroundGroup and the clock/prompt box, and patch
+//     _setTransitionProgress only to quieten it while the prompt is up.
 //
 // On disable() we restore prototype methods and clean up any live dialog.
 
@@ -25,6 +28,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {LockClockWidget} from './clockWidget.js';
 import {WeatherWidget} from './weatherWidget.js';
 import {WeatherService} from './weatherService.js';
+import {AtmosphereGroup, conditionGrade} from './atmosphere.js';
 
 // Marker we attach to St.Widgets we create, so we can tell ours from upstream's
 // when iterating background children.
@@ -36,19 +40,30 @@ export class LockScreenCustomizer {
         this._extensionPath = extensionPath;
         this._origCreateBackground = null;
         this._origUpdateBackgroundEffects = null;
+        this._origSetTransitionProgress = null;
         this._origInit = null;
         this._liveDialogs = new Set();
         this._weatherService = null;
         this._settingsChangedId = 0;
+        this._lastPayload = null;
+        this._unsubscribeGrade = null;
+        this._screensaverSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.screensaver'});
     }
 
     enable() {
         // Single shared weather service across all dialogs for the session.
         this._weatherService = new WeatherService(this._settings);
+        this._lastPayload = this._weatherService.getCachedPayload();
+        this._unsubscribeGrade = this._weatherService.subscribe(p => {
+            this._lastPayload = p;
+            for (const dialog of this._liveDialogs)
+                this._applyBackgroundEffectsTo(dialog);
+        });
 
         const proto = UnlockDialogModule.UnlockDialog.prototype;
         this._origCreateBackground = proto._createBackground;
         this._origUpdateBackgroundEffects = proto._updateBackgroundEffects;
+        this._origSetTransitionProgress = proto._setTransitionProgress;
         this._origInit = proto._init;
 
         const self = this;
@@ -59,6 +74,11 @@ export class LockScreenCustomizer {
 
         proto._updateBackgroundEffects = function () {
             self._applyBackgroundEffectsTo(this);
+        };
+
+        proto._setTransitionProgress = function (progress) {
+            self._origSetTransitionProgress.call(this, progress);
+            this._lssAtmosphere?.setPromptProgress(progress);
         };
 
         proto._init = function (parentActor) {
@@ -94,11 +114,17 @@ export class LockScreenCustomizer {
             proto._createBackground = this._origCreateBackground;
         if (this._origUpdateBackgroundEffects)
             proto._updateBackgroundEffects = this._origUpdateBackgroundEffects;
+        if (this._origSetTransitionProgress)
+            proto._setTransitionProgress = this._origSetTransitionProgress;
         if (this._origInit)
             proto._init = this._origInit;
         this._origCreateBackground = null;
         this._origUpdateBackgroundEffects = null;
+        this._origSetTransitionProgress = null;
         this._origInit = null;
+
+        try { this._unsubscribeGrade?.(); } catch {}
+        this._unsubscribeGrade = null;
 
         if (this._settingsChangedId) {
             this._settings.disconnect(this._settingsChangedId);
@@ -115,18 +141,30 @@ export class LockScreenCustomizer {
 
     // ---- background construction ----
 
-    _createBackgroundFor(dialog, monitorIndex) {
+    // The custom wallpaper file for a monitor, or null for the system one.
+    _wallpaperFileFor(monitorIndex) {
         const uri = this._wallpaperUriFor(monitorIndex);
-        let file = null;
-        if (uri) {
-            try {
-                file = Gio.File.new_for_uri(uri);
-                if (!file.query_exists(null))
-                    file = null;
-            } catch {
-                file = null;
-            }
+        if (!uri)
+            return null;
+        try {
+            const file = Gio.File.new_for_uri(uri);
+            return file.query_exists(null) ? file : null;
+        } catch {
+            return null;
         }
+    }
+
+    _fallbackWallpaperFile() {
+        try {
+            const uri = this._screensaverSettings.get_string('picture-uri');
+            return uri ? Gio.File.new_for_uri(uri) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    _createBackgroundFor(dialog, monitorIndex) {
+        const file = this._wallpaperFileFor(monitorIndex);
 
         if (!file) {
             // No override → fall back to upstream behaviour (uses the
@@ -183,6 +221,14 @@ export class LockScreenCustomizer {
         const themeContext = St.ThemeContext.get_for_stage(global.stage);
         const radius = this._settings.get_int('wallpaper-blur-radius');
         const dimPct = this._settings.get_int('wallpaper-dim-percent');
+        // Weather grading adjusts the user's own blur and dim, never
+        // replaces them (atmosphere.js documents the per-condition table).
+        const grade = this._settings.get_boolean('weather-grading')
+            ? conditionGrade(this._lastPayload, dialog._lssAtmosphere?.getSkies())
+            : {dimDelta: 0, radiusMul: 1, tint: [0, 0, 0]};
+        const effDim = Math.min(90, Math.max(0, dimPct + grade.dimDelta));
+        const effRadius = Math.max(0, radius * grade.radiusMul);
+        const [tr, tg, tb] = grade.tint;
 
         for (const widget of dialog._backgroundGroup) {
             const effect = widget.get_effect('blur');
@@ -193,22 +239,23 @@ export class LockScreenCustomizer {
                     // backgrounds. (Upstream's BLUR_BRIGHTNESS is ~0.55; we
                     // approximate by treating dimPct as the overlay alpha.)
                     brightness: 1.0,
-                    radius: Math.max(0, radius) * themeContext.scale_factor,
+                    radius: effRadius * themeContext.scale_factor,
                 });
             }
             if (widget._lssDim) {
-                const alpha = Math.min(1, Math.max(0, dimPct / 100));
+                const alpha = Math.min(1, Math.max(0, effDim / 100));
                 widget._lssDim.set_style(
-                    `background-color: rgba(0, 0, 0, ${alpha.toFixed(3)});`
+                    `background-color: rgba(${tr}, ${tg}, ${tb}, ${alpha.toFixed(3)});`
                 );
             } else if (widget[OUR_BG_MARKER] !== true) {
                 // Upstream-built background. We can't add a dim overlay safely
                 // (the BackgroundManager owns its children), so fall back to
                 // dimming via the BlurEffect brightness, matching upstream's
-                // style.
+                // style. The grade's tint has nowhere to go on this path;
+                // its dim and blur still apply.
                 if (effect) {
                     effect.set({
-                        brightness: 1.0 - (dimPct / 100),
+                        brightness: 1.0 - (effDim / 100),
                     });
                 }
             }
@@ -262,6 +309,24 @@ export class LockScreenCustomizer {
         dialog._lssClock = ourClock;
         dialog._lssWeather = ourWeather;
 
+        // The atmosphere sits between the backgrounds and everything else:
+        // above the blur so weather stays crisp, below the clock and the
+        // password prompt so it can never cover them, and non-reactive so
+        // clicks, swipes, and keys reach the dialog untouched.
+        const atmosphere = new AtmosphereGroup({
+            settings: this._settings,
+            service: this._weatherService,
+            monitors: Main.layoutManager.monitors,
+            fileForMonitor: i => this._wallpaperFileFor(i),
+            fallbackFile: this._fallbackWallpaperFile(),
+            onGradeDirty: () => this._applyBackgroundEffectsTo(dialog),
+        });
+        dialog.insert_child_above(atmosphere, dialog._backgroundGroup);
+        dialog._lssAtmosphere = atmosphere;
+        Main.layoutManager.connectObject('monitors-changed', () => {
+            atmosphere.rebuild(Main.layoutManager.monitors);
+        }, dialog);
+
         // Style the surrounding box so our cluster reads as one block.
         clockBox.add_style_class_name('lss-cluster');
 
@@ -282,8 +347,10 @@ export class LockScreenCustomizer {
             }
             dialog._lssClock?.destroy();
             dialog._lssWeather?.destroy();
+            dialog._lssAtmosphere?.destroy();
             dialog._lssClock = null;
             dialog._lssWeather = null;
+            dialog._lssAtmosphere = null;
             if (dialog._clock) {
                 dialog._clock.remove_style_class_name('lss-cluster');
                 dialog._clock._time?.show();
@@ -301,10 +368,17 @@ export class LockScreenCustomizer {
             for (const dialog of this._liveDialogs) {
                 try {
                     dialog._updateBackgrounds?.();
+                    // New wallpaper, new sky to detect.
+                    dialog._lssAtmosphere?.setFallbackFile(this._fallbackWallpaperFile());
+                    dialog._lssAtmosphere?.rebuild();
                 } catch (e) {
                     console.warn(`[lock-screen-suite] live bg refresh failed: ${e}`);
                 }
             }
+        }
+        if (key === 'weather-grading') {
+            for (const dialog of this._liveDialogs)
+                this._applyBackgroundEffectsTo(dialog);
         }
         // The weather service refetches on its own when the place, units,
         // interval or enabled state change; styling keys need no request.

@@ -15,7 +15,13 @@ SCHEMA = ROOT / "schemas" / "org.gnome.shell.extensions.lock-screen-suite.gschem
 # carrying four glyphs instead of seventeen -- the temperature measured 46x27px
 # on a 3840x2160 panel and read as a smudge.
 MIN_TEXT_FRACTION_OF_CLOCK = 1 / 3
-MIN_ICON_MULTIPLE_OF_TEXT = 2
+# The icon rule changed with the atmosphere: it used to demand an
+# illustration at least twice the text, because the illustration carried
+# the condition. The atmosphere carries it now, and the row's icon is a
+# symbolic glyph whose job is to sit at text scale — neither a smudge
+# nor a second illustration.
+MIN_ICON_FRACTION_OF_TEXT = 1 / 2
+MAX_ICON_MULTIPLE_OF_TEXT = 3 / 2
 
 
 def default_int(name: str) -> int:
@@ -35,13 +41,18 @@ class WeatherBlockIsLegibleTests(unittest.TestCase):
             f"weather-font-size {text} is a footnote beside a {clock}px clock",
         )
 
-    def test_the_icon_does_not_shrink_into_the_text(self) -> None:
+    def test_the_symbolic_icon_sits_at_text_scale(self) -> None:
         text = default_int("weather-font-size")
         icon = default_int("weather-icon-size")
         self.assertGreaterEqual(
             icon,
-            text * MIN_ICON_MULTIPLE_OF_TEXT,
-            f"weather-icon-size {icon} is too small to read beside {text}px text",
+            text * MIN_ICON_FRACTION_OF_TEXT,
+            f"weather-icon-size {icon} shrank below legibility beside {text}px text",
+        )
+        self.assertLessEqual(
+            icon,
+            text * MAX_ICON_MULTIPLE_OF_TEXT,
+            f"weather-icon-size {icon} grew back into an illustration beside {text}px text",
         )
 
     def test_the_defaults_are_inside_their_own_ranges(self) -> None:

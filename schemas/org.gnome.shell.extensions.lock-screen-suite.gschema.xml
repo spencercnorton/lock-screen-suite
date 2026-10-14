@@ -111,7 +111,30 @@
     </key>
     <key name="weather-show-animation" type="b">
       <default>true</default>
-      <summary>Animate weather icon</summary>
+      <summary>Animate the weather atmosphere</summary>
+    </key>
+    <key name="weather-atmosphere" type="b">
+      <default>true</default>
+      <summary>Show the full-screen weather atmosphere</summary>
+      <description>Rain, snow, fog, clouds and stars across the whole
+      lock screen, placed against sky detected in the wallpaper. Turning
+      this off keeps the weather line under the clock with no effects.</description>
+    </key>
+    <key name="weather-atmosphere-density" type="i">
+      <default>100</default>
+      <range min="25" max="200"/>
+      <summary>Atmosphere density in percent</summary>
+    </key>
+    <key name="weather-grading" type="b">
+      <default>true</default>
+      <summary>Grade the wallpaper for the weather</summary>
+      <description>Adjust blur, dim and tint per condition on top of your
+      own wallpaper settings — cooler and darker for rain, softer for
+      fog, and a night grade measured from the wallpaper's sky.</description>
+    </key>
+    <key name="weather-lightning" type="b">
+      <default>true</default>
+      <summary>Lightning flashes in thunderstorms</summary>
     </key>
     <key name="weather-font-size" type="i">
       <default>44</default>
@@ -119,9 +142,9 @@
       <summary>Weather text size in pixels</summary>
     </key>
     <key name="weather-icon-size" type="i">
-      <default>132</default>
-      <range min="32" max="200"/>
-      <summary>Weather icon size in pixels</summary>
+      <default>30</default>
+      <range min="16" max="64"/>
+      <summary>Weather symbolic icon size in pixels</summary>
     </key>
     <key name="weather-last-payload" type="s">
       <default>""</default>

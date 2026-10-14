@@ -277,9 +277,9 @@ export default class LockScreenSuitePrefs extends ExtensionPreferences {
             icon_name: 'weather-clear-symbolic',
         });
 
-        const main = new Adw.PreferencesGroup({title: 'Weather widget'});
+        const main = new Adw.PreferencesGroup({title: 'Weather line'});
         main.add(this._switchRow(settings, 'weather-enabled', 'Show weather'));
-        main.add(this._switchRow(settings, 'weather-show-animation', 'Animate icon'));
+        main.add(this._switchRow(settings, 'weather-show-animation', 'Animate atmosphere'));
         main.add(this._comboRow(
             settings, 'weather-units', 'Units',
             [['imperial', 'Imperial (°F, mph)'], ['metric', 'Metric (°C, km/h)']]
@@ -289,6 +289,21 @@ export default class LockScreenSuitePrefs extends ExtensionPreferences {
             'Refresh interval (min)', null, 5, 120
         ));
         page.add(main);
+
+        const atmo = new Adw.PreferencesGroup({
+            title: 'Atmosphere',
+            description: 'Rain, snow, fog, clouds and stars across the whole ' +
+                'lock screen, placed against sky detected in your wallpaper.',
+        });
+        atmo.add(this._switchRow(settings, 'weather-atmosphere', 'Show atmosphere'));
+        atmo.add(this._intSliderRow(
+            settings, 'weather-atmosphere-density',
+            'Density (%)', 'Scales how much rain, snow and stars are drawn.', 25, 200
+        ));
+        atmo.add(this._switchRow(settings, 'weather-grading', 'Grade wallpaper for the weather',
+            'Adjusts blur, dim and tint per condition on top of your wallpaper settings.'));
+        atmo.add(this._switchRow(settings, 'weather-lightning', 'Lightning flashes'));
+        page.add(atmo);
 
         const loc = new Adw.PreferencesGroup({
             title: 'Location',
@@ -305,7 +320,7 @@ export default class LockScreenSuitePrefs extends ExtensionPreferences {
 
         const style = new Adw.PreferencesGroup({title: 'Style'});
         style.add(this._intSliderRow(
-            settings, 'weather-icon-size', 'Icon size (px)', null, 32, 200
+            settings, 'weather-icon-size', 'Symbolic icon size (px)', null, 16, 64
         ));
         style.add(this._intSliderRow(
             settings, 'weather-font-size', 'Text size (px)', null, 12, 64

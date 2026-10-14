@@ -211,6 +211,10 @@ export class WeatherService {
             'current=temperature_2m,apparent_temperature,relative_humidity_2m,' +
                 'is_day,weather_code,wind_speed_10m,wind_direction_10m,' +
                 'precipitation,cloud_cover',
+            // Today's high and low for the weather line. One extra array in
+            // the same request, not a second fetch.
+            'daily=temperature_2m_max,temperature_2m_min',
+            'forecast_days=1',
             `temperature_unit=${tempUnit}`,
             `wind_speed_unit=${windUnit}`,
             'timezone=auto',
@@ -257,8 +261,13 @@ export class WeatherService {
             isDay: current.is_day === 1 || current.is_day === true,
             weatherCode: current.weather_code,
             windSpeed: current.wind_speed_10m,
+            // Fetched since the first version but never stored. The
+            // atmosphere needs it to slant rain and snow with the wind.
+            windDirection: current.wind_direction_10m,
             cloudCover: current.cloud_cover,
             precipitation: current.precipitation,
+            tempMax: json.daily?.temperature_2m_max?.[0],
+            tempMin: json.daily?.temperature_2m_min?.[0],
         };
 
         this._settings.set_string('weather-last-payload', JSON.stringify(payload));

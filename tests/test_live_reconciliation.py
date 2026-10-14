@@ -5,6 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CLOCK = (ROOT / "clockWidget.js").read_text()
 WEATHER = (ROOT / "weatherWidget.js").read_text()
+ATMOSPHERE = (ROOT / "atmosphere.js").read_text()
 
 
 class LiveReconciliationTests(unittest.TestCase):
@@ -24,24 +25,24 @@ class LiveReconciliationTests(unittest.TestCase):
                     f"{label} can regress to truncating its final glyph",
                 )
 
-    def test_icon_timeline_lives_exactly_as_long_as_its_icon(self) -> None:
-        body = WEATHER[WEATHER.index("function loopSeconds"):]
+    def test_atmosphere_timeline_lives_exactly_as_long_as_its_actor(self) -> None:
+        body = ATMOSPHERE[ATMOSPHERE.index("function loopSeconds"):]
         body = body[: body.index("\n}\n")]
 
-        # Starts only once the icon has a stage, pauses while it is unmapped.
+        # Starts only once the actor has a stage, pauses while it is unmapped.
         self.assertLess(body.index("if (actor.mapped && screenOn())"), body.index("timeline.start()"))
         self.assertIn("timeline.pause()", body)
         self.assertIn("actor.connect('notify::mapped'", body)
-        # Stops when the icon is destroyed. A timeline left running ticks into
-        # disposed St.Icons and floods the journal on every lock.
+        # Stops when the actor is destroyed. A timeline left running ticks into
+        # disposed actors and floods the journal on every lock.
         destroy = body[body.index("actor.connect('destroy'"):]
         self.assertIn("timeline.stop()", destroy)
         self.assertIn("actor.disconnect(mappedId)", destroy)
         # Rooted on the actor, so GJS does not collect it mid-animation.
         self.assertIn("actor._lssTimeline = timeline", body)
 
-    def test_icon_timeline_pauses_while_the_monitors_are_off(self) -> None:
-        body = WEATHER[WEATHER.index("function loopSeconds"):]
+    def test_atmosphere_timeline_pauses_while_the_monitors_are_off(self) -> None:
+        body = ATMOSPHERE[ATMOSPHERE.index("function loopSeconds"):]
         body = body[: body.index("\n}\n")]
         # The unlock dialog stays mapped while GNOME blanks the screen, so
         # `mapped` alone kept a timeline running flat out behind dark monitors.
@@ -57,12 +58,14 @@ class LiveReconciliationTests(unittest.TestCase):
         self.assertNotIn("_sync(", watch)
 
     def test_every_running_frame_is_drawn(self) -> None:
-        body = WEATHER[WEATHER.index("function loopSeconds"):]
+        body = ATMOSPHERE[ATMOSPHERE.index("function loopSeconds"):]
         body = body[: body.index("\n}\n")]
         frame = body[body.index("timeline.connect('new-frame'"):]
         frame = frame[: frame.index("});")]
         # A frame with nothing drawn is not paced by the display, so a slow
-        # icon that rounds to the same pixel spun the main loop at a full core.
+        # particle that rounds to the same pixel would spin the main loop
+        # at a full core. Positions may be applied at a capped rate, but a
+        # redraw must still be queued every frame.
         self.assertIn("actor.queue_redraw()", frame)
 
     def test_the_clock_does_not_redraw_behind_dark_monitors(self) -> None:
@@ -91,10 +94,15 @@ class LiveReconciliationTests(unittest.TestCase):
         fetch = service[service.index("set_int64('weather-last-fetch'"):]
         self.assertLess(fetch.index("this._reschedule()"), fetch.index("this._emit(payload)"))
 
-    def test_a_replaced_icon_is_destroyed(self) -> None:
+    def test_the_icon_updates_in_place(self) -> None:
+        # The animated icon swapped a whole subtree per condition, and a
+        # replaced child that was not destroyed stayed mapped with a live
+        # timeline. The symbolic icon cannot leak either way.
         body = WEATHER[WEATHER.index("    _refreshIcon() {"):]
         body = body[: body.index("\n    }\n")]
-        self.assertIn("old?.destroy()", body)
+        self.assertIn("this._icon.icon_name =", body)
+        self.assertNotIn("set_child", body)
+        self.assertNotIn("add_child", body)
 
     def test_no_weather_row_until_a_place_is_chosen(self) -> None:
         body = WEATHER[WEATHER.index("    _onEnabledChanged() {"):]
