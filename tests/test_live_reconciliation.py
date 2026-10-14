@@ -33,11 +33,15 @@ class LiveReconciliationTests(unittest.TestCase):
         self.assertLess(body.index("if (actor.mapped && screenOn())"), body.index("timeline.start()"))
         self.assertIn("timeline.pause()", body)
         self.assertIn("actor.connect('notify::mapped'", body)
-        # Stops when the actor is destroyed. A timeline left running ticks into
-        # disposed actors and floods the journal on every lock.
-        destroy = body[body.index("actor.connect('destroy'"):]
-        self.assertIn("timeline.stop()", destroy)
-        self.assertIn("actor.disconnect(mappedId)", destroy)
+        # Stops when the actor is destroyed — and when layers are rebuilt
+        # on the same actor, which must retire the previous timeline
+        # completely or every rebuild adds another running loop.
+        self.assertIn("const dispose = () =>", body)
+        self.assertIn("actor.disconnect(mappedId)", body)
+        self.assertIn("timeline.stop()", body)
+        self.assertIn("timeline._lssDispose = dispose", body)
+        self.assertIn("actor.connect('destroy', dispose)", body)
+        self.assertIn("this._timeline?._lssDispose?.()", ATMOSPHERE)
         # Rooted on the actor, so GJS does not collect it mid-animation.
         self.assertIn("actor._lssTimeline = timeline", body)
 
@@ -47,8 +51,7 @@ class LiveReconciliationTests(unittest.TestCase):
         # The unlock dialog stays mapped while GNOME blanks the screen, so
         # `mapped` alone kept a timeline running flat out behind dark monitors.
         self.assertIn("if (actor.mapped && screenOn())", body)
-        destroy = body[body.index("actor.connect('destroy'"):]
-        self.assertIn("unwatchScreen()", destroy)
+        self.assertIn("unwatchScreen();", body)
         screen = (ROOT / "screen.js").read_text()
         watch = screen[screen.index("export function watchScreen"):]
         watch = watch[: watch.index("\n}\n")]

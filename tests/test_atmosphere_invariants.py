@@ -36,6 +36,22 @@ class AtmosphereInvariantTests(unittest.TestCase):
         self.assertIn("Math.min(300,", ATMOSPHERE)
         self.assertIn("Math.min(170,", ATMOSPHERE)
 
+    def test_every_category_name_matches_the_service_vocabulary(self) -> None:
+        # describeWmoCode says 'partly-cloudy'; a bare 'partly' comparison
+        # silently produced an empty atmosphere for a common condition.
+        self.assertNotIn("=== 'partly'", ATMOSPHERE)
+        self.assertNotIn("{partly:", ATMOSPHERE)
+
+    def test_wind_direction_changes_rebuild_the_scene(self) -> None:
+        body = ATMOSPHERE[ATMOSPHERE.index("    _sceneKeyFor(scene) {"):]
+        body = body[: body.index("\n    }\n")]
+        self.assertIn("scene.slant", body)
+
+    def test_no_sky_means_no_moon(self) -> None:
+        # A fixed fallback position put a moon over a forest wallpaper.
+        self.assertNotIn("?? W * 0.79", ATMOSPHERE)
+        self.assertIn("if (spot) {", ATMOSPHERE)
+
     def test_the_prompt_quiets_but_keeps_the_atmosphere(self) -> None:
         self.assertIn("setPromptProgress(progress)", LOCK)
         self.assertIn("1 - 0.55 * clamp(progress, 0, 1)", ATMOSPHERE)

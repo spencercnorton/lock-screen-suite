@@ -98,11 +98,21 @@ function loopSeconds(actor, onTick) {
     const mappedId = actor.connect('notify::mapped', sync);
     const unwatchScreen = watchScreen(sync);
     sync();
-    actor.connect('destroy', () => {
+    // Disposable as a whole: rebuilding layers on the same actor must
+    // retire the previous timeline completely — its frame callback, its
+    // mapped handler, and its screen watcher — or every rebuild adds
+    // another running loop until the dialog is destroyed.
+    let disposed = false;
+    const dispose = () => {
+        if (disposed)
+            return;
+        disposed = true;
         actor.disconnect(mappedId);
         unwatchScreen();
         timeline.stop();
-    });
+    };
+    timeline._lssDispose = dispose;
+    actor.connect('destroy', dispose);
     actor._lssTimeline = timeline;
     return timeline;
 }
@@ -330,8 +340,18 @@ export function computeSky(monitors, fileForMonitor, fallbackFile) {
             }
             const full = loadFallback();
             if (full) {
-                const sub = full.new_subpixbuf(
-                    Math.round(monitor.x * scale), Math.round(monitor.y * scale), mw, mh);
+                // Crop in the fallback image's OWN scale (it was scaled by
+                // the widest monitor), then resize the crop to classifier
+                // resolution. Cropping in each monitor's private scale
+                // walks off the image on mixed-width layouts.
+                const fs = MASK_W_PER_MONITOR / Math.max(...monitors.map(m => m.width));
+                const crop = full.new_subpixbuf(
+                    Math.round(monitor.x * fs), Math.round(monitor.y * fs),
+                    Math.max(1, Math.round(monitor.width * fs)),
+                    Math.max(1, Math.round(monitor.height * fs)));
+                const sub = (crop.get_width() === mw && crop.get_height() === mh)
+                    ? crop
+                    : crop.scale_simple(mw, mh, GdkPixbuf.InterpType.BILINEAR);
                 return pixbufSky(sub, monitor);
             }
         } catch (e) {
@@ -476,6 +496,12 @@ class AtmosphereGroup extends Clutter.Actor {
     }
 
     _buildLayers() {
+        this._timeline?._lssDispose?.();
+        this._timeline = null;
+        if (this._lssTimeline) {
+            this._lssTimeline._lssDispose?.();
+            this._lssTimeline = null;
+        }
         this.destroy_all_children();
         this._layers = this._monitors.map((monitor, i) => {
             const actor = new Clutter.Actor({
@@ -543,6 +569,7 @@ class AtmosphereGroup extends Clutter.Actor {
             return 'none';
         return [scene.category, scene.night, Math.round(scene.intensity * 8),
             Math.round(scene.cloud01 * 5), Math.round(scene.windMph / 8),
+            Math.round(scene.slant * 10),
             this._settings.get_int('weather-atmosphere-density'),
             this._settings.get_boolean('weather-lightning'),
             this._animate(), this._skies ? 'sky' : 'nosky',
@@ -584,17 +611,17 @@ class AtmosphereGroup extends Clutter.Actor {
 
         // Cloud shadows cross the land; overcast makes them strong, and
         // partly-cloudy days get warm breaks between decks.
-        const shadowCount = {partly: 3, overcast: 6, drizzle: 3, rain: 4, storm: 5, snow: 2}[cat] ?? 0;
+        const shadowCount = {'partly-cloudy': 3, overcast: 6, drizzle: 3, rain: 4, storm: 5, snow: 2}[cat] ?? 0;
         for (let i = 0; i < shadowCount; i++) {
             const rx = W * (0.28 + 0.27 * jitter(i, 21)), ry = H * (0.16 + 0.14 * jitter(i, 22));
-            const alpha = (cat === 'partly' ? 0.12 + 0.08 * jitter(i, 23)
+            const alpha = (cat === 'partly-cloudy' ? 0.12 + 0.08 * jitter(i, 23)
                 : cat === 'overcast' ? 0.22 + 0.12 * jitter(i, 23)
                 : 0.14 + 0.12 * jitter(i, 23)) * (0.4 + 0.6 * scene.cloud01);
             const a = makeSoftEllipse(rx, ry, '8, 12, 22', alpha.toFixed(3));
             actor.add_child(a);
             layer.shadows.push({a, x0: jitter(i, 24) * (W + 2 * rx) - rx, y: H * (0.1 + 0.7 * jitter(i, 25)), rx, ry, vx: (9 + 17 * jitter(i, 26)) * (0.5 + scene.windMph / 18) * sizeScale});
         }
-        if (cat === 'partly' && !scene.night) {
+        if (cat === 'partly-cloudy' && !scene.night) {
             for (let i = 0; i < 2; i++) {
                 const rx = W * (0.22 + 0.18 * jitter(i, 31)), ry = H * (0.14 + 0.1 * jitter(i, 32));
                 const a = makeSoftEllipse(rx, ry, '255, 214, 140', (0.05 + 0.04 * jitter(i, 33)).toFixed(3));
@@ -604,7 +631,7 @@ class AtmosphereGroup extends Clutter.Actor {
         }
 
         // Sky layer: glow, moon, stars, clouds — in detected sky only.
-        if (cat === 'clear' || cat === 'mostly-clear' || cat === 'partly' || cat === 'overcast') {
+        if (cat === 'clear' || cat === 'mostly-clear' || cat === 'partly-cloudy' || cat === 'overcast') {
             if (cat !== 'overcast') {
                 const rng = mulberry32(20261014 + layer.index);
                 let spot = null;
@@ -615,19 +642,33 @@ class AtmosphereGroup extends Clutter.Actor {
                     else if (p && !spot)
                         spot = p;
                 }
-                const gx = spot?.x ?? W * 0.79, gy = spot?.y ?? H * 0.16;
-                const glowR = Math.min(W, H) * (scene.night ? 0.4 : 0.55);
-                const glow = makeSoftEllipse(glowR, glowR,
-                    scene.night ? '196, 214, 245' : '255, 196, 92', scene.night ? '0.20' : '0.34');
-                glow.set_position(Math.round(gx - glowR), Math.round(gy - glowR));
-                actor.add_child(glow);
-                layer.glow = {a: glow, night: scene.night};
-                if (scene.night) {
-                    const moonSize = Math.round(56 * sizeScale);
-                    const moon = makeMoon(moonSize);
-                    moon.set_position(Math.round(gx - moonSize / 2), Math.round(gy - moonSize / 2));
-                    actor.add_child(moon);
-                    layer.moon = moon;
+                // No sky found means no glow and no moon: a fixed fallback
+                // position would put a moon over a forest wallpaper's trees,
+                // which is the placement this design exists to avoid. (When
+                // detection itself is unavailable, sample() falls back to
+                // the upper band and spot is found as before.)
+                if (spot) {
+                    const gx = spot.x, gy = spot.y;
+                    const glowR = Math.min(W, H) * (scene.night ? 0.4 : 0.55);
+                    const glow = makeSoftEllipse(glowR, glowR,
+                        scene.night ? '196, 214, 245' : '255, 196, 92', scene.night ? '0.20' : '0.34');
+                    glow.set_position(Math.round(gx - glowR), Math.round(gy - glowR));
+                    actor.add_child(glow);
+                    layer.glow = {a: glow, night: scene.night};
+                    if (scene.night) {
+                        const moonSize = Math.round(56 * sizeScale);
+                        const mr = moonSize / 2;
+                        // The disc's footprint, not just its centre, in sky.
+                        const fits = !sky.mask ||
+                            (sky.at(gx - mr * 0.7, gy) && sky.at(gx + mr * 0.7, gy) &&
+                             sky.at(gx, gy - mr * 0.7) && sky.at(gx, gy + mr * 0.7));
+                        if (fits) {
+                            const moon = makeMoon(moonSize);
+                            moon.set_position(Math.round(gx - mr), Math.round(gy - mr));
+                            actor.add_child(moon);
+                            layer.moon = moon;
+                        }
+                    }
                 }
             }
             if (scene.night && sky.fraction > 0.03) {
@@ -662,8 +703,8 @@ class AtmosphereGroup extends Clutter.Actor {
                     layer.stars.push(star);
                 }
             }
-            if (cat === 'partly' || cat === 'overcast') {
-                const n = cat === 'partly' ? Math.round(2 + scene.cloud01 * 4) : Math.round(4 + scene.cloud01 * 6);
+            if (cat === 'partly-cloudy' || cat === 'overcast') {
+                const n = cat === 'partly-cloudy' ? Math.round(2 + scene.cloud01 * 4) : Math.round(4 + scene.cloud01 * 6);
                 const rgb = cat === 'overcast'
                     ? (scene.night ? '86, 94, 116' : '122, 132, 152')
                     : (scene.night ? '150, 160, 184' : '244, 247, 252');
@@ -673,7 +714,7 @@ class AtmosphereGroup extends Clutter.Actor {
                     const holder = new Clutter.Actor({reactive: false});
                     for (const [dx, dy, s] of [[0, 0, 1], [-0.45, 0.1, 0.65], [0.45, -0.08, 0.55]]) {
                         const e = makeSoftEllipse(rx * s, ry * s, rgb,
-                            (cat === 'partly' ? 0.14 + 0.08 * jitter(i, 42) : 0.24 + 0.12 * jitter(i, 42)).toFixed(3));
+                            (cat === 'partly-cloudy' ? 0.14 + 0.08 * jitter(i, 42) : 0.24 + 0.12 * jitter(i, 42)).toFixed(3));
                         e.set_position(Math.round(dx * rx), Math.round(dy * rx));
                         holder.add_child(e);
                     }
