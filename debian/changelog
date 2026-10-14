@@ -1,3 +1,13 @@
+gnome-shell-extension-lock-screen-suite (2.1.0) resolute; urgency=medium
+
+  * Replace the centered animated weather icon with a full-screen ambient
+    atmosphere (rain, snow, storms, fog, clouds, clear day/night) on every
+    monitor, plus a slim text weather line with daily high/low. Sky-aware:
+    stars, moon, sun glow and clouds anchor to sky detected in the lock
+    wallpaper, and bright day wallpapers dim adaptively at night.
+
+ -- Norvi <apt@globalentry.systems>  Wed, 14 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-lock-screen-suite (2.0.0) resolute; urgency=medium
 
   * First public release. The UUID is now
