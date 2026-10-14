@@ -2,7 +2,11 @@
 
 All notable changes to Lock Screen Suite are documented here.
 
-## Unreleased
+## 2.1.1 — 2026-10-14
+
+Packaging fix for the 2.1.0 tag: adds the missing `debian/changelog` entry so the release pipeline can build the package. No functional change from 2.1.0.
+
+## 2.1.0 — 2026-10-14
 
 - The animated weather icon is replaced by a full-screen atmosphere: rain slanted by the real wind, drifting snow, ground fog, clouds and their shadows, and a starfield with the moon at its real phase, across every monitor between the blurred wallpaper and the clock.
 - Stars, the moon, sun glow, and clouds are placed only in sky detected in the wallpaper itself, computed once per wallpaper and cached; a wallpaper with no visible sky gets no stars on its trees. Night scenes dim the wallpaper by an amount measured from that sky.
