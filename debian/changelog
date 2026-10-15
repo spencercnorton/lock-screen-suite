@@ -1,3 +1,15 @@
+gnome-shell-extension-lock-screen-suite (2.2.0) resolute; urgency=medium
+
+  * Move the weather atmosphere into a bounded stage around the clock on
+    the primary monitor: rain splashes on the clock cluster's roof and
+    drips off its corners, snow settles and melts there, clouds drift
+    behind it, fog gathers at its base. The animation pauses while the
+    password prompt is up, and per-frame repainting is confined to the
+    stage rectangle, fixing the wake-to-prompt lag of the full-screen
+    version on multi-monitor setups.
+
+ -- Norvi <apt@globalentry.systems>  Thu, 15 Oct 2026 00:00:00 +0000
+
 gnome-shell-extension-lock-screen-suite (2.1.1) resolute; urgency=medium
 
   * Packaging fix: add the missing debian/changelog entry required by the
