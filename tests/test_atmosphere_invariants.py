@@ -79,6 +79,14 @@ class AtmosphereInvariantTests(unittest.TestCase):
         self.assertIn("xAtRoof", ATMOSPHERE)
         self.assertIn("cornerX", ATMOSPHERE)
         self.assertIn("stickS", ATMOSPHERE)
+        # Rendered positions must be the collision positions: the wrap
+        # is the identity inside the stage, and each drop falls at the
+        # slant its roof intersection was computed from (storm gusts
+        # are per-drop, never a tick-time multiplier).
+        self.assertIn("((x + 40) % (W + 80)", ATMOSPHERE)
+        self.assertIn("const dSlant", ATMOSPHERE)
+        self.assertIn("d.x0 + d.slant * s", ATMOSPHERE)
+        self.assertNotIn("slantPx", ATMOSPHERE)
 
     def test_the_prompt_freezes_the_animation_loop(self) -> None:
         # Authenticating must cost no particles: while the prompt is

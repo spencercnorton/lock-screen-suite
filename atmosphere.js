@@ -620,7 +620,7 @@ class AtmosphereGroup extends Clutter.Actor {
         this.add_child(actor);
         this._layers = [{monitor, index, actor, stage, roof, roofLocal: null,
             rain: [], snow: [], stars: [], clouds: [], shadows: [], lights: [],
-            fogs: [], glow: null, moon: null, flash: null, snowCap: null, angleDeg: 0}];
+            fogs: [], glow: null, moon: null, flash: null, snowCap: null}];
         if (this._animate()) {
             this._timeline = loopSeconds(actor, t => this._tick(t));
             if (this._promptProgress > 0.02)
@@ -746,7 +746,6 @@ class AtmosphereGroup extends Clutter.Actor {
             y: layer.roof.y - stage.y, bottom: layer.roof.bottom - stage.y,
         };
         layer.roofLocal = roof;
-        layer.angleDeg = Math.atan(scene.slant) * 180 / Math.PI;
         const horizonLocal = xLocal =>
             sky.horizonAt(clamp(xLocal + stage.x, 0, monitor.width - 1)) - stage.y;
         const hasSky = !sky.mask ||
@@ -913,12 +912,18 @@ class AtmosphereGroup extends Clutter.Actor {
                 const len = (10 + 12 * jitter(i, 62)) * (1.25 - 0.55 * depth) * sizeScale;
                 const a = makeParticle('lss-atmo-drop', depth < 0.33 ? 2 : 1.4, len);
                 a.set_pivot_point(0.5, 0.5);
-                a.rotation_angle_z = layer.angleDeg;
                 a.opacity = 0;
                 actor.add_child(a);
+                // Storm gusts vary per drop, baked in here: the tick
+                // must draw the same slant the roof intersection below
+                // was computed from, or a drop jumps sideways when its
+                // roll begins.
+                const dSlant = scene.slant * (cat === 'storm' ? 0.75 + 0.5 * jitter(i, 66) : 1);
+                const dAngle = Math.atan(dSlant) * 180 / Math.PI;
+                a.rotation_angle_z = dAngle;
                 const x0 = jitter(i, 63) * (W + H * 0.5) - H * 0.25;
                 const fallToRoof = roof.y + len;
-                const xAtRoof = x0 + scene.slant * fallToRoof;
+                const xAtRoof = x0 + dSlant * fallToRoof;
                 const hit = roof.y > 10 && xAtRoof >= roof.x0 && xAtRoof <= roof.x1;
                 let s1 = 0, s2 = 0, total = H + 2 * len, cornerX = 0, rollDir = 1;
                 if (hit) {
@@ -933,6 +938,7 @@ class AtmosphereGroup extends Clutter.Actor {
                 const speed = (780 + 320 * jitter(i, 65)) * (1.25 - 0.45 * depth) * sizeScale;
                 layer.rain.push({
                     a, len, depth, x0, hit, s1, s2, total, cornerX, rollDir, xAtRoof,
+                    slant: dSlant, angleDeg: dAngle,
                     rate: speed * LOOP_S / total,
                     phase: jitter(i, 64),
                     peak: Math.round(255 - 90 * depth),
@@ -967,13 +973,14 @@ class AtmosphereGroup extends Clutter.Actor {
                 const s1 = roof.y + 2 * r;
                 const swayAt = s => Math.sin(s / (140 * sizeScale) + phase * TAU) * swayAmp;
                 const xAtRoof = x0 + swayAt(s1) + scene.slant * s1 * 0.35;
+                const fSlant = scene.slant;
                 const hit = roof.y > 10 && xAtRoof >= roof.x0 && xAtRoof <= roof.x1;
                 const stickS = hit ? (120 + 180 * jitter(i, 78)) * sizeScale : 0;
                 const total = hit ? s1 + stickS : H + 4 * r;
                 const speed = (150 + 80 * jitter(i, 79)) * (1.25 - 0.5 * depth) * sizeScale;
                 layer.snow.push({
                     a, r, depth, x0, hit, s1: hit ? s1 : 0, stickS, total,
-                    stickX: xAtRoof,
+                    stickX: xAtRoof, slant: fSlant,
                     rate: speed * LOOP_S / total,
                     phase,
                     spin: (jitter(i, 75) < 0.5 ? -1 : 1) * (1 + Math.round(jitter(i, 76) * 2)),
@@ -1026,15 +1033,14 @@ class AtmosphereGroup extends Clutter.Actor {
             }
             for (const f of layer.fogs)
                 f.a.set_position(Math.round(wrapX(f.x0 + t * f.vx, f.rx) - f.rx), Math.round(f.y - f.ry));
-            const slantPx = scene.slant * gust;
             if (roof) {
                 for (const d of layer.rain) {
                     const f = frac(t / LOOP_S * d.rate + d.phase);
                     const s = f * d.total;
-                    let x, y, rot = layer.angleDeg;
+                    let x, y, rot = d.angleDeg;
                     if (!d.hit || s < d.s1) {
                         y = -d.len + s;
-                        x = d.x0 + slantPx * s;
+                        x = d.x0 + d.slant * s;
                     } else if (s < d.s2) {
                         // Splash flat, then roll along the roof.
                         x = d.xAtRoof + d.rollDir * (s - d.s1) * 0.45;
@@ -1043,7 +1049,7 @@ class AtmosphereGroup extends Clutter.Actor {
                     } else {
                         const ds = s - d.s2;
                         y = roof.y + ds;
-                        x = d.cornerX + d.rollDir * 3 + slantPx * ds * 0.5;
+                        x = d.cornerX + d.rollDir * 3 + d.slant * ds * 0.5;
                     }
                     const squash = d.hit && s >= d.s1 && s < d.s1 + 14;
                     if (squash !== d._sq) {
@@ -1051,7 +1057,7 @@ class AtmosphereGroup extends Clutter.Actor {
                         d._sq = squash;
                     }
                     d.a.rotation_angle_z = rot;
-                    d.a.set_position(Math.round(((x % (W + 80)) + W + 80) % (W + 80) - 40), Math.round(y));
+                    d.a.set_position(Math.round((((x + 40) % (W + 80)) + W + 80) % (W + 80) - 40), Math.round(y));
                     d.a.opacity = Math.round(d.peak * envelope(f));
                 }
                 for (const fl of layer.snow) {
@@ -1066,8 +1072,8 @@ class AtmosphereGroup extends Clutter.Actor {
                         const y = -fl.r * 2 + s;
                         const x = fl.x0 +
                             Math.sin(s / (140 * clamp(layer.monitor.height / 1080, 0.75, 2.2)) + fl.phase * TAU) * fl.swayAmp +
-                            slantPx * s * 0.35;
-                        fl.a.set_position(Math.round(((x % (W + 40)) + W + 40) % (W + 40) - 20), Math.round(y));
+                            fl.slant * s * 0.35;
+                        fl.a.set_position(Math.round((((x + 20) % (W + 40)) + W + 40) % (W + 40) - 20), Math.round(y));
                         fl.a.rotation_angle_z = f * 360 * fl.spin;
                         fl.a.opacity = Math.round(fl.peak * envelope(f, 0.08, 0.9));
                     }
