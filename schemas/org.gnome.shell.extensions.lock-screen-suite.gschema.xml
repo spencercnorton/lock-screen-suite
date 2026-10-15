@@ -115,7 +115,7 @@
     </key>
     <key name="weather-atmosphere" type="b">
       <default>true</default>
-      <summary>Show the full-screen weather atmosphere</summary>
+      <summary>Show the weather atmosphere around the clock</summary>
       <description>Rain, snow, fog, clouds and stars across the whole
       lock screen, placed against sky detected in the wallpaper. Turning
       this off keeps the weather line under the clock with no effects.</description>

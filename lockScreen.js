@@ -312,19 +312,36 @@ export class LockScreenCustomizer {
         // The atmosphere sits between the backgrounds and everything else:
         // above the blur so weather stays crisp, below the clock and the
         // password prompt so it can never cover them, and non-reactive so
-        // clicks, swipes, and keys reach the dialog untouched.
+        // clicks, swipes, and keys reach the dialog untouched. It lives
+        // in a bounded stage around this clock cluster on the primary
+        // monitor; the cluster's own allocation is the invisible box
+        // precipitation collides with, so feed it live geometry.
         const atmosphere = new AtmosphereGroup({
             settings: this._settings,
             service: this._weatherService,
             monitors: Main.layoutManager.monitors,
+            primaryIndex: Main.layoutManager.primaryIndex,
+            clockBoxFor: () => {
+                try {
+                    const [x, y] = clockBox.get_transformed_position();
+                    const [w, h] = clockBox.get_transformed_size();
+                    return w > 40 && h > 20 ? {x, y, width: w, height: h} : null;
+                } catch {
+                    return null;
+                }
+            },
             fileForMonitor: i => this._wallpaperFileFor(i),
             fallbackFile: this._fallbackWallpaperFile(),
             onGradeDirty: () => this._applyBackgroundEffectsTo(dialog),
         });
         dialog.insert_child_above(atmosphere, dialog._backgroundGroup);
         dialog._lssAtmosphere = atmosphere;
+        clockBox.connectObject('notify::allocation', () => {
+            atmosphere.syncClockBox();
+        }, dialog);
         Main.layoutManager.connectObject('monitors-changed', () => {
-            atmosphere.rebuild(Main.layoutManager.monitors);
+            atmosphere.rebuild(Main.layoutManager.monitors,
+                Main.layoutManager.primaryIndex);
         }, dialog);
 
         // Style the surrounding box so our cluster reads as one block.

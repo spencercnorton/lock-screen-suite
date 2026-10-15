@@ -1,13 +1,23 @@
-// Full-screen weather atmosphere: one non-reactive layer per monitor,
-// between the blurred wallpaper and the clock/password prompt, so the
-// lock screen itself is raining, snowing, foggy, or starlit instead of
-// carrying a small animated icon of the weather in its centre.
+// Clock-stage weather atmosphere: one non-reactive bounded layer
+// around the clock cluster on the primary monitor, between the blurred
+// wallpaper and the clock/password prompt. The weather lives with the
+// clock instead of posing as a small animated icon — and instead of
+// spanning every monitor, which the first version did: three
+// full-screen layers cost a whole-stage repaint per frame and lagged
+// the wake-to-prompt transition, and at that size the effect read as
+// wallpaper noise rather than part of the dialog.
+//
+// The clock cluster itself is an invisible box in the scene: rain
+// splashes on its roof, rolls to a corner, and drips off; snow settles
+// on the roof and melts; clouds and their shadows drift behind and
+// above it; fog gathers at its base. The other monitors keep the
+// graded wallpaper only.
 //
 // What goes where follows the wallpaper. Stars, the moon, sun glow, and
 // clouds are placed only in sky detected in the wallpaper itself
-// (skyCore.js, computed once per wallpaper and cached); rain, snow, fog,
-// and cloud shadows fall in front of everything, as weather does. A
-// wallpaper with no visible sky gets no stars, which is the point.
+// (skyCore.js, computed once per wallpaper and cached) inside the
+// stage's own rectangle; a stage over land gets no stars, which is
+// the point.
 //
 // Motion is deterministic in one looping 60-second timeline, like the
 // icon animations this replaces: every particle derives its position
@@ -71,9 +81,14 @@ function mulberry32(seed) {
 // (rooted on the actor, mapped + monitors-on gating, stopped on destroy,
 // a draw every frame) are the ones test_live_reconciliation.py pins;
 // each was a measured bug in the icon this replaces. Position updates
-// are applied at most every ~14ms: positions derive from absolute t, so
-// skipping an update loses nothing, and a 120Hz panel does not double
-// the JavaScript cost of a 60Hz one.
+// are applied at most every ~33ms: weather reads the same at 30fps,
+// positions derive from absolute t so skipping an update loses nothing,
+// and a 120Hz panel does not quadruple the JavaScript cost. The actor
+// this is bound to is the bounded stage around the clock, so the
+// per-frame redraw damages that rect only — binding it to a stage-wide
+// group repainted three 4K monitors per frame and visibly lagged the
+// wake-to-prompt transition. `_lssSetFrozen` pauses the loop outright
+// while the password prompt is up: authenticating costs no particles.
 function loopSeconds(actor, onTick) {
     const timeline = new Clutter.Timeline({
         actor,
@@ -83,17 +98,22 @@ function loopSeconds(actor, onTick) {
     let lastApplied = -1;
     timeline.connect('new-frame', () => {
         const t = timeline.get_progress() * LOOP_S;
-        if (lastApplied < 0 || t < lastApplied || t - lastApplied >= 0.014) {
+        if (lastApplied < 0 || t < lastApplied || t - lastApplied >= 0.033) {
             onTick(t);
             lastApplied = t;
         }
         actor.queue_redraw();
     });
+    let frozen = false;
     const sync = () => {
-        if (actor.mapped && screenOn())
+        if (actor.mapped && screenOn() && !frozen)
             timeline.start();
         else
             timeline.pause();
+    };
+    timeline._lssSetFrozen = value => {
+        frozen = !!value;
+        sync();
     };
     const mappedId = actor.connect('notify::mapped', sync);
     const unwatchScreen = watchScreen(sync);
@@ -283,9 +303,17 @@ class MonitorSky {
 
     sample(rng) {
         const {width: W, height: H} = this.monitor;
+        return this.sampleIn(rng, 8, 4, W - 8, 4 + H * 0.6);
+    }
+
+    // A sky point inside a monitor-local rect, top-weighted. The
+    // clock-stage atmosphere samples only its own rect, so a sky that
+    // exists elsewhere on the monitor never leaks a moon into a
+    // stage that sits over land.
+    sampleIn(rng, x0, y0, x1, y1) {
         for (let i = 0; i < 64; i++) {
-            const x = 8 + rng() * (W - 16);
-            const y = 4 + H * 0.6 * Math.pow(rng(), 1.35);
+            const x = x0 + rng() * (x1 - x0);
+            const y = y0 + (y1 - y0) * Math.pow(rng(), 1.35);
             if (this.at(x, y))
                 return {x, y};
         }
@@ -440,11 +468,13 @@ const STRIKE_CYCLE = 15;
 
 export const AtmosphereGroup = GObject.registerClass(
 class AtmosphereGroup extends Clutter.Actor {
-    _init({settings, service, monitors, fileForMonitor, fallbackFile, onGradeDirty}) {
+    _init({settings, service, monitors, primaryIndex, clockBoxFor, fileForMonitor, fallbackFile, onGradeDirty}) {
         super._init({reactive: false});
         this._settings = settings;
         this._service = service;
         this._monitors = monitors;
+        this._primaryIndexPref = primaryIndex ?? 0;
+        this._clockBoxFor = clockBoxFor ?? null;
         this._fileForMonitor = fileForMonitor;
         this._fallbackFile = fallbackFile;
         this._onGradeDirty = onGradeDirty;
@@ -453,6 +483,9 @@ class AtmosphereGroup extends Clutter.Actor {
         this._sceneKey = null;
         this._layers = [];
         this._skyIdleId = 0;
+        this._clockBox = null;
+        this._clockBoxDirty = false;
+        this._promptProgress = 0;
 
         this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         const rebuild = () => this._rebuildScene();
@@ -495,27 +528,104 @@ class AtmosphereGroup extends Clutter.Actor {
             this._interfaceSettings.get_boolean('enable-animations');
     }
 
+    _primaryIndex() {
+        const n = this._monitors.length;
+        return n ? clamp(Math.floor(this._primaryIndexPref) || 0, 0, n - 1) : -1;
+    }
+
+    // The stage: a bounded rect around the clock cluster on the primary
+    // monitor, plus the cluster's roof line precipitation collides
+    // with. Everything is monitor-local here; pools convert to
+    // stage-local. Before the clock has an allocation (or if it ever
+    // reports one outside this monitor) fall back to the centred
+    // upper-third box the unlock dialog uses, and let the first real
+    // allocation rebuild the stage around the true clock.
+    _stageFor(monitor) {
+        const W = monitor.width, H = monitor.height;
+        const scale = clamp(H / 1080, 0.75, 2.2);
+        let cb = null;
+        if (this._clockBox) {
+            const c = {
+                x: this._clockBox.x - monitor.x, y: this._clockBox.y - monitor.y,
+                w: this._clockBox.width, h: this._clockBox.height,
+            };
+            if (c.w > 40 && c.h > 20 && c.x + c.w / 2 >= 0 && c.x + c.w / 2 <= W &&
+                c.y + c.h / 2 >= 0 && c.y + c.h / 2 <= H)
+                cb = c;
+        }
+        if (!cb) {
+            const w = Math.min(W * 0.4, 560 * scale), h = H * 0.16;
+            cb = {x: (W - w) / 2, y: H * 0.2, w, h};
+        }
+        const stageW = Math.min(W, clamp(cb.w * 2.15, 640 * scale, W * 0.62));
+        const above = clamp(cb.h * 1.8, 230 * scale, H * 0.36);
+        const below = clamp(cb.h * 0.85, 115 * scale, H * 0.24);
+        const stageX = clamp(cb.x + cb.w / 2 - stageW / 2, 0, Math.max(0, W - stageW));
+        const stageY = clamp(cb.y - above, 0, H);
+        const stageBottom = clamp(cb.y + cb.h + below, stageY + 120 * scale, H);
+        return {
+            stage: {x: stageX, y: stageY, w: stageW, h: stageBottom - stageY},
+            roof: {
+                x0: cb.x - 16 * scale, x1: cb.x + cb.w + 16 * scale,
+                y: cb.y - 4, bottom: cb.y + cb.h,
+            },
+        };
+    }
+
+    // The clock moved (first allocation, font settle, layout change):
+    // rebuild the stage around it. Ignored while the prompt is up —
+    // the dialog shifts the clock during that transition, the scene is
+    // frozen anyway, and the pending box is applied when the clock
+    // face returns.
+    syncClockBox() {
+        const rect = this._clockBoxFor?.() ?? null;
+        if (!rect)
+            return;
+        const prev = this._clockBox;
+        if (prev && Math.abs(prev.x - rect.x) < 6 && Math.abs(prev.y - rect.y) < 6 &&
+            Math.abs(prev.width - rect.width) < 6 && Math.abs(prev.height - rect.height) < 6)
+            return;
+        this._clockBox = rect;
+        if (this._promptProgress > 0.02) {
+            this._clockBoxDirty = true;
+            return;
+        }
+        this._clockBoxDirty = false;
+        this._buildLayers();
+        this._sceneKey = null;
+        this._rebuildScene();
+    }
+
+    // One layer only: the primary monitor's clock stage. The other
+    // monitors keep the graded wallpaper and nothing else — a weather
+    // system spanning every panel cost three full-screen repaints per
+    // frame and read as wallpaper noise; weather that lives around
+    // the clock reads as part of the dialog.
     _buildLayers() {
         this._timeline?._lssDispose?.();
         this._timeline = null;
-        if (this._lssTimeline) {
-            this._lssTimeline._lssDispose?.();
-            this._lssTimeline = null;
-        }
         this.destroy_all_children();
-        this._layers = this._monitors.map((monitor, i) => {
-            const actor = new Clutter.Actor({
-                x: monitor.x, y: monitor.y,
-                width: monitor.width, height: monitor.height,
-                clip_to_allocation: true,
-                reactive: false,
-            });
-            this.add_child(actor);
-            return {monitor, index: i, actor, rain: [], snow: [], stars: [], clouds: [], shadows: [], lights: [], fogs: [], glow: null, moon: null, flash: null};
+        this._layers = [];
+        const index = this._primaryIndex();
+        const monitor = index >= 0 ? this._monitors[index] : null;
+        if (!monitor)
+            return;
+        const {stage, roof} = this._stageFor(monitor);
+        const actor = new Clutter.Actor({
+            x: Math.round(monitor.x + stage.x), y: Math.round(monitor.y + stage.y),
+            width: Math.round(stage.w), height: Math.round(stage.h),
+            clip_to_allocation: true,
+            reactive: false,
         });
-        this._timeline = null;
-        if (this._animate())
-            this._timeline = loopSeconds(this, t => this._tick(t));
+        this.add_child(actor);
+        this._layers = [{monitor, index, actor, stage, roof, roofLocal: null,
+            rain: [], snow: [], stars: [], clouds: [], shadows: [], lights: [],
+            fogs: [], glow: null, moon: null, flash: null, snowCap: null, angleDeg: 0}];
+        if (this._animate()) {
+            this._timeline = loopSeconds(actor, t => this._tick(t));
+            if (this._promptProgress > 0.02)
+                this._timeline._lssSetFrozen?.(true);
+        }
     }
 
     _scheduleSky() {
@@ -541,9 +651,11 @@ class AtmosphereGroup extends Clutter.Actor {
     }
 
     // Monitors or wallpapers changed under a live dialog.
-    rebuild(monitors) {
+    rebuild(monitors, primaryIndex) {
         if (monitors)
             this._monitors = monitors;
+        if (primaryIndex !== undefined && primaryIndex !== null)
+            this._primaryIndexPref = primaryIndex;
         this._skies = null;
         this._buildLayers();
         this._scheduleSky();
@@ -559,9 +671,25 @@ class AtmosphereGroup extends Clutter.Actor {
         return this._payload;
     }
 
-    // The password prompt takes focus; the weather stays, quieter.
+    // The password prompt takes focus; the weather stays, quieter —
+    // and still. Freezing the loop while the prompt is up gives the
+    // shell its whole frame budget for the wake transition and for
+    // typing, which is exactly where the full-screen version lagged.
     setPromptProgress(progress) {
         this.opacity = Math.round(255 * (1 - 0.55 * clamp(progress, 0, 1)));
+        const wasFrozen = this._promptProgress > 0.02;
+        this._promptProgress = clamp(progress, 0, 1);
+        const frozen = this._promptProgress > 0.02;
+        if (frozen !== wasFrozen)
+            this._timeline?._lssSetFrozen?.(frozen);
+        if (!frozen && wasFrozen && this._clockBoxDirty) {
+            this._clockBoxDirty = false;
+            this._buildLayers();
+            this._sceneKey = null;
+            this._rebuildScene();
+        } else if (!frozen && wasFrozen) {
+            this.syncClockBox();
+        }
     }
 
     _sceneKeyFor(scene) {
@@ -573,6 +701,7 @@ class AtmosphereGroup extends Clutter.Actor {
             this._settings.get_int('weather-atmosphere-density'),
             this._settings.get_boolean('weather-lightning'),
             this._animate(), this._skies ? 'sky' : 'nosky',
+            this._layers[0] ? `${Math.round(this._layers[0].stage.w)}x${Math.round(this._layers[0].stage.h)}@${Math.round(this._layers[0].roof.y / 8)}` : 'nostage',
             this._skies?.map(s => Math.round(s.fraction * 20)).join(',')].join('|');
     }
 
@@ -596,60 +725,80 @@ class AtmosphereGroup extends Clutter.Actor {
     }
 
     _buildLayerPools(layer, scene) {
-        const {monitor, actor} = layer;
-        const W = monitor.width, H = monitor.height;
+        const {monitor, actor, stage} = layer;
+        const W = stage.w, H = stage.h;
         const sky = this._skies?.[layer.index] ?? new MonitorSky(monitor, null, 0, 0);
         const seedBase = layer.index * 10000;
-        const sizeScale = clamp(H / 1080, 0.75, 2.2);
+        const sizeScale = clamp(monitor.height / 1080, 0.75, 2.2);
         const areaSqrt = Math.sqrt((W * H) / (1920 * 1080));
         const densityPref = this._settings.get_int('weather-atmosphere-density') / 100;
         actor.destroy_all_children();
         layer.rain = []; layer.snow = []; layer.stars = [];
         layer.clouds = []; layer.shadows = []; layer.lights = []; layer.fogs = [];
-        layer.glow = null; layer.moon = null; layer.flash = null;
+        layer.glow = null; layer.moon = null; layer.flash = null; layer.snowCap = null;
         const cat = scene.category;
+        // The clock cluster is an invisible box inside the stage: rain
+        // splashes on its roof, rolls to a corner and drips off; snow
+        // settles on the roof and melts. Convert the monitor-local
+        // roof into stage-local coordinates once, here.
+        const roof = {
+            x0: layer.roof.x0 - stage.x, x1: layer.roof.x1 - stage.x,
+            y: layer.roof.y - stage.y, bottom: layer.roof.bottom - stage.y,
+        };
+        layer.roofLocal = roof;
+        layer.angleDeg = Math.atan(scene.slant) * 180 / Math.PI;
+        const horizonLocal = xLocal =>
+            sky.horizonAt(clamp(xLocal + stage.x, 0, monitor.width - 1)) - stage.y;
+        const hasSky = !sky.mask ||
+            !!sky.sampleIn(mulberry32(7 + layer.index), stage.x, stage.y,
+                stage.x + W, stage.y + H * 0.6);
 
-        // Cloud shadows cross the land; overcast makes them strong, and
-        // partly-cloudy days get warm breaks between decks.
-        const shadowCount = {'partly-cloudy': 3, overcast: 6, drizzle: 3, rain: 4, storm: 5, snow: 2}[cat] ?? 0;
+        // Cloud shadows cross the stage (and so pass behind the clock);
+        // overcast makes them strong, partly-cloudy days get a warm
+        // break between decks.
+        const shadowCount = {'partly-cloudy': 2, overcast: 3, drizzle: 2, rain: 2, storm: 3, snow: 1}[cat] ?? 0;
         for (let i = 0; i < shadowCount; i++) {
-            const rx = W * (0.28 + 0.27 * jitter(i, 21)), ry = H * (0.16 + 0.14 * jitter(i, 22));
+            const rx = W * (0.34 + 0.3 * jitter(i, 21)), ry = H * (0.2 + 0.16 * jitter(i, 22));
             const alpha = (cat === 'partly-cloudy' ? 0.12 + 0.08 * jitter(i, 23)
                 : cat === 'overcast' ? 0.22 + 0.12 * jitter(i, 23)
                 : 0.14 + 0.12 * jitter(i, 23)) * (0.4 + 0.6 * scene.cloud01);
             const a = makeSoftEllipse(rx, ry, '8, 12, 22', alpha.toFixed(3));
             actor.add_child(a);
-            layer.shadows.push({a, x0: jitter(i, 24) * (W + 2 * rx) - rx, y: H * (0.1 + 0.7 * jitter(i, 25)), rx, ry, vx: (9 + 17 * jitter(i, 26)) * (0.5 + scene.windMph / 18) * sizeScale});
+            layer.shadows.push({a, x0: jitter(i, 24) * (W + 2 * rx) - rx, y: H * (0.15 + 0.6 * jitter(i, 25)), rx, ry, vx: (9 + 17 * jitter(i, 26)) * (0.5 + scene.windMph / 18) * sizeScale});
         }
         if (cat === 'partly-cloudy' && !scene.night) {
-            for (let i = 0; i < 2; i++) {
-                const rx = W * (0.22 + 0.18 * jitter(i, 31)), ry = H * (0.14 + 0.1 * jitter(i, 32));
-                const a = makeSoftEllipse(rx, ry, '255, 214, 140', (0.05 + 0.04 * jitter(i, 33)).toFixed(3));
-                actor.add_child(a);
-                layer.lights.push({a, x0: jitter(i, 34) * (W + 2 * rx) - rx, y: H * (0.2 + 0.6 * jitter(i, 35)), rx, ry, vx: (9 + 11 * jitter(i, 36)) * (0.5 + scene.windMph / 18) * sizeScale});
-            }
+            const rx = W * (0.3 + 0.18 * jitter(0, 31)), ry = H * (0.18 + 0.1 * jitter(0, 32));
+            const a = makeSoftEllipse(rx, ry, '255, 214, 140', (0.05 + 0.04 * jitter(0, 33)).toFixed(3));
+            actor.add_child(a);
+            layer.lights.push({a, x0: jitter(0, 34) * (W + 2 * rx) - rx, y: H * (0.25 + 0.5 * jitter(0, 35)), rx, ry, vx: (9 + 11 * jitter(0, 36)) * (0.5 + scene.windMph / 18) * sizeScale});
         }
 
-        // Sky layer: glow, moon, stars, clouds — in detected sky only.
+        // Sky layer: glow, moon, stars, clouds — in detected sky
+        // inside the stage only.
         if (cat === 'clear' || cat === 'mostly-clear' || cat === 'partly-cloudy' || cat === 'overcast') {
-            if (cat !== 'overcast') {
+            if (cat !== 'overcast' && hasSky) {
                 const rng = mulberry32(20261014 + layer.index);
                 let spot = null;
-                for (let i = 0; i < 24 && !spot; i++) {
-                    const p = sky.sample(rng);
-                    if (p && p.x > W * 0.45)
+                for (let i = 0; i < 24; i++) {
+                    const p = sky.sampleIn(rng, stage.x, stage.y, stage.x + W, stage.y + H * 0.55);
+                    if (!p)
+                        break;
+                    if (p.x > stage.x + W * 0.45) {
                         spot = p;
-                    else if (p && !spot)
+                        break;
+                    }
+                    if (!spot)
                         spot = p;
                 }
-                // No sky found means no glow and no moon: a fixed fallback
-                // position would put a moon over a forest wallpaper's trees,
-                // which is the placement this design exists to avoid. (When
-                // detection itself is unavailable, sample() falls back to
-                // the upper band and spot is found as before.)
+                // No sky in the stage means no glow and no moon: a
+                // fixed fallback position would put a moon over the
+                // wallpaper's trees, which is the placement this
+                // design exists to avoid. (When detection itself is
+                // unavailable, at() falls back to the upper band and
+                // a spot is found as before.)
                 if (spot) {
-                    const gx = spot.x, gy = spot.y;
-                    const glowR = Math.min(W, H) * (scene.night ? 0.4 : 0.55);
+                    const gx = spot.x - stage.x, gy = spot.y - stage.y;
+                    const glowR = Math.min(W, H) * (scene.night ? 0.42 : 0.55);
                     const glow = makeSoftEllipse(glowR, glowR,
                         scene.night ? '196, 214, 245' : '255, 196, 92', scene.night ? '0.20' : '0.34');
                     glow.set_position(Math.round(gx - glowR), Math.round(gy - glowR));
@@ -660,8 +809,8 @@ class AtmosphereGroup extends Clutter.Actor {
                         const mr = moonSize / 2;
                         // The disc's footprint, not just its centre, in sky.
                         const fits = !sky.mask ||
-                            (sky.at(gx - mr * 0.7, gy) && sky.at(gx + mr * 0.7, gy) &&
-                             sky.at(gx, gy - mr * 0.7) && sky.at(gx, gy + mr * 0.7));
+                            (sky.at(spot.x - mr * 0.7, spot.y) && sky.at(spot.x + mr * 0.7, spot.y) &&
+                             sky.at(spot.x, spot.y - mr * 0.7) && sky.at(spot.x, spot.y + mr * 0.7));
                         if (fits) {
                             const moon = makeMoon(moonSize);
                             moon.set_position(Math.round(gx - mr), Math.round(gy - mr));
@@ -671,17 +820,17 @@ class AtmosphereGroup extends Clutter.Actor {
                     }
                 }
             }
-            if (scene.night && sky.fraction > 0.03) {
+            if (scene.night && sky.fraction > 0.03 && hasSky) {
                 const density = Math.min(1, sky.fraction / 0.35) *
                     (cat === 'clear' ? 1 : 0.4) * (1 - scene.cloud01 * 0.7);
-                const count = Math.min(170, Math.round(150 * density * densityPref));
+                const count = Math.min(70, Math.round(64 * density * densityPref));
                 const rng = mulberry32(20261014 + layer.index * 7919);
                 const minSep = 16 * sizeScale;
                 const placed = [];
                 for (let i = 0; i < count; i++) {
                     let spot = null;
-                    for (let attempt = 0; attempt < 40 && !spot; attempt++) {
-                        const p = sky.sample(rng);
+                    for (let attempt = 0; attempt < 24 && !spot; attempt++) {
+                        const p = sky.sampleIn(rng, stage.x, stage.y, stage.x + W, stage.y + H * 0.65);
                         if (!p || placed.some(q => Math.abs(q.x - p.x) < minSep && Math.abs(q.y - p.y) < minSep))
                             continue;
                         spot = p;
@@ -691,25 +840,25 @@ class AtmosphereGroup extends Clutter.Actor {
                     const mag = Math.pow(rng(), 2.1);
                     const r = (0.8 + mag * 1.6) * sizeScale;
                     const a = makeParticle('lss-atmo-star', r * 2, r * 2);
-                    a.set_position(Math.round(spot.x - r), Math.round(spot.y - r));
+                    a.set_position(Math.round(spot.x - stage.x - r), Math.round(spot.y - stage.y - r));
                     actor.add_child(a);
                     const star = {
                         a, x: spot.x, y: spot.y,
                         base: 0.3 + mag * 0.7,
-                        fade: clamp((sky.horizonAt(spot.x) - spot.y) / (H * 0.16), 0.12, 1),
+                        fade: clamp((sky.horizonAt(spot.x) - spot.y) / (monitor.height * 0.16), 0.12, 1),
                         ph: rng(), per: [4, 5, 6][i % 3],
                     };
                     placed.push(star);
                     layer.stars.push(star);
                 }
             }
-            if (cat === 'partly-cloudy' || cat === 'overcast') {
-                const n = cat === 'partly-cloudy' ? Math.round(2 + scene.cloud01 * 4) : Math.round(4 + scene.cloud01 * 6);
+            if ((cat === 'partly-cloudy' || cat === 'overcast') && hasSky) {
+                const n = cat === 'partly-cloudy' ? Math.round(2 + scene.cloud01 * 3) : Math.round(3 + scene.cloud01 * 4);
                 const rgb = cat === 'overcast'
                     ? (scene.night ? '86, 94, 116' : '122, 132, 152')
                     : (scene.night ? '150, 160, 184' : '244, 247, 252');
                 for (let i = 0; i < n; i++) {
-                    const rx = W * (0.1 + 0.13 * jitter(i + seedBase, 41));
+                    const rx = W * (0.16 + 0.18 * jitter(i + seedBase, 41));
                     const ry = rx * 0.3;
                     const holder = new Clutter.Actor({reactive: false});
                     for (const [dx, dy, s] of [[0, 0, 1], [-0.45, 0.1, 0.65], [0.45, -0.08, 0.55]]) {
@@ -722,58 +871,89 @@ class AtmosphereGroup extends Clutter.Actor {
                     const x0 = jitter(i + seedBase, 43) * (W + 3 * rx) - 1.5 * rx;
                     layer.clouds.push({
                         a: holder, x0, rx, ry,
-                        y: Math.max(ry, sky.horizonAt(clamp(x0, 0, W - 1)) * (0.15 + 0.4 * jitter(i, 44))),
+                        y: Math.max(ry, horizonLocal(clamp(x0, 0, W - 1)) * (0.15 + 0.4 * jitter(i, 44))),
                         vx: (7 + 10 * jitter(i, 45)) * (0.5 + scene.windMph / 16) * sizeScale,
                     });
                 }
             }
         }
 
-        // Fog hugs the ground: a bottom-weighted wash plus soft puffs.
+        // Fog gathers at the base of the clock: a soft wash over the
+        // stage plus puffs drifting through the cluster's foot.
         if (cat === 'fog') {
             const col = scene.night ? '188, 198, 218' : '226, 232, 242';
-            const wash = new St.Widget({width: W, height: H, reactive: false});
+            const wash = new St.Widget({width: Math.round(W), height: Math.round(H), reactive: false});
             wash.set_style(
                 'background-gradient-direction: vertical;' +
-                `background-gradient-start: rgba(${col}, 0.05);` +
-                `background-gradient-end: rgba(${col}, 0.24);`);
+                `background-gradient-start: rgba(${col}, 0.04);` +
+                `background-gradient-end: rgba(${col}, 0.20);`);
             actor.add_child(wash);
-            for (let i = 0; i < 16; i++) {
-                const rx = W * (0.16 + 0.22 * jitter(i, 51)), ry = H * (0.05 + 0.07 * jitter(i, 52));
-                const a = makeSoftEllipse(rx, ry, col, (0.05 + 0.08 * jitter(i, 53)).toFixed(3));
+            for (let i = 0; i < 8; i++) {
+                const rx = W * (0.2 + 0.24 * jitter(i, 51)), ry = H * (0.06 + 0.07 * jitter(i, 52));
+                const a = makeSoftEllipse(rx, ry, col, (0.06 + 0.09 * jitter(i, 53)).toFixed(3));
                 actor.add_child(a);
                 layer.fogs.push({
                     a, rx, ry, x0: jitter(i, 54) * (W + 2 * rx) - rx,
-                    y: H * (0.22 + 0.78 * Math.pow(jitter(i, 55), 0.65)),
+                    y: clamp(roof.bottom + (jitter(i, 55) - 0.3) * H * 0.24, ry, H - ry * 0.3),
                     vx: (jitter(i, 56) < 0.5 ? -1 : 1) * (5 + 10 * jitter(i, 57)) * sizeScale,
                 });
             }
         }
 
-        // Precipitation falls in front of everything.
+        // Precipitation, with the clock box as an obstacle. Paths are
+        // measured in fall-equivalent pixels s: fall to the roof,
+        // (rain) roll along it at 0.45x fall speed, then drip off the
+        // corner; (snow) stick on the roof and melt. Drops that miss
+        // the box fall the full stage beside the clock.
         if (cat === 'drizzle' || cat === 'rain' || cat === 'storm') {
-            const count = Math.min(520, Math.round(
-                380 * areaSqrt * scene.intensity * densityPref * (cat === 'drizzle' ? 0.45 : 1)));
-            const angle = Math.atan(scene.slant) * 180 / Math.PI;
+            const count = Math.min(170, Math.round(
+                150 * areaSqrt * scene.intensity * densityPref * (cat === 'drizzle' ? 0.5 : 1)));
             for (let i = 0; i < count; i++) {
                 const depth = jitter(i + seedBase, 61);
                 const len = (10 + 12 * jitter(i, 62)) * (1.25 - 0.55 * depth) * sizeScale;
                 const a = makeParticle('lss-atmo-drop', depth < 0.33 ? 2 : 1.4, len);
                 a.set_pivot_point(0.5, 0.5);
-                a.rotation_angle_z = angle;
+                a.rotation_angle_z = layer.angleDeg;
                 a.opacity = 0;
                 actor.add_child(a);
+                const x0 = jitter(i, 63) * (W + H * 0.5) - H * 0.25;
+                const fallToRoof = roof.y + len;
+                const xAtRoof = x0 + scene.slant * fallToRoof;
+                const hit = roof.y > 10 && xAtRoof >= roof.x0 && xAtRoof <= roof.x1;
+                let s1 = 0, s2 = 0, total = H + 2 * len, cornerX = 0, rollDir = 1;
+                if (hit) {
+                    rollDir = scene.slant > 0.04 ? 1 : scene.slant < -0.04 ? -1
+                        : (xAtRoof < (roof.x0 + roof.x1) / 2 ? -1 : 1);
+                    cornerX = rollDir > 0 ? roof.x1 : roof.x0;
+                    const rollPx = Math.max(10, Math.abs(cornerX - xAtRoof));
+                    s1 = fallToRoof;
+                    s2 = s1 + rollPx / 0.45;
+                    total = s2 + (H - roof.y) + len;
+                }
+                const speed = (780 + 320 * jitter(i, 65)) * (1.25 - 0.45 * depth) * sizeScale;
                 layer.rain.push({
-                    a, len, depth,
-                    x0: jitter(i, 63) * (W + H * 0.6) - H * 0.3,
-                    rate: [40, 48, 60][i % 3] * (1.25 - 0.45 * depth),
+                    a, len, depth, x0, hit, s1, s2, total, cornerX, rollDir, xAtRoof,
+                    rate: speed * LOOP_S / total,
                     phase: jitter(i, 64),
                     peak: Math.round(255 - 90 * depth),
+                    _sq: false,
                 });
             }
         }
         if (cat === 'snow') {
-            const count = Math.min(300, Math.round(230 * areaSqrt * scene.intensity * densityPref));
+            const count = Math.min(110, Math.round(95 * areaSqrt * scene.intensity * densityPref));
+            // A settled cap along the roof sells the accumulation the
+            // sticking flakes imply.
+            if (roof.x1 - roof.x0 > 80 && roof.y > 10) {
+                const capRx = (roof.x1 - roof.x0) / 2 * 0.98;
+                const capRy = Math.max(4, 6 * sizeScale);
+                const cap = makeSoftEllipse(capRx, capRy, '240, 246, 255',
+                    (0.3 + 0.3 * clamp(scene.intensity, 0, 1)).toFixed(3));
+                cap.set_position(Math.round((roof.x0 + roof.x1) / 2 - capRx),
+                    Math.round(roof.y - capRy * 0.6));
+                actor.add_child(cap);
+                layer.snowCap = cap;
+            }
             for (let i = 0; i < count; i++) {
                 const depth = jitter(i + seedBase, 71);
                 const r = (1.1 + 2.3 * jitter(i, 72)) * (1.3 - 0.6 * depth) * sizeScale;
@@ -781,20 +961,33 @@ class AtmosphereGroup extends Clutter.Actor {
                 a.set_pivot_point(0.5, 0.5);
                 a.opacity = 0;
                 actor.add_child(a);
+                const x0 = jitter(i, 73) * W;
+                const swayAmp = (14 + 28 * jitter(i, 77)) * sizeScale;
+                const phase = jitter(i, 74);
+                const s1 = roof.y + 2 * r;
+                const swayAt = s => Math.sin(s / (140 * sizeScale) + phase * TAU) * swayAmp;
+                const xAtRoof = x0 + swayAt(s1) + scene.slant * s1 * 0.35;
+                const hit = roof.y > 10 && xAtRoof >= roof.x0 && xAtRoof <= roof.x1;
+                const stickS = hit ? (120 + 180 * jitter(i, 78)) * sizeScale : 0;
+                const total = hit ? s1 + stickS : H + 4 * r;
+                const speed = (150 + 80 * jitter(i, 79)) * (1.25 - 0.5 * depth) * sizeScale;
                 layer.snow.push({
-                    a, r, depth,
-                    x0: jitter(i, 73) * W,
-                    rate: [10, 12, 15][i % 3] * (1.25 - 0.5 * depth),
-                    phase: jitter(i, 74),
+                    a, r, depth, x0, hit, s1: hit ? s1 : 0, stickS, total,
+                    stickX: xAtRoof,
+                    rate: speed * LOOP_S / total,
+                    phase,
                     spin: (jitter(i, 75) < 0.5 ? -1 : 1) * (1 + Math.round(jitter(i, 76) * 2)),
-                    swayAmp: (14 + 28 * jitter(i, 77)) * sizeScale,
+                    swayAmp,
                     peak: Math.round(235 - 70 * depth),
                 });
             }
         }
         if (cat === 'storm' && this._settings.get_boolean('weather-lightning')) {
-            const flash = new St.Widget({width: W, height: H, reactive: false, opacity: 0});
-            flash.set_style('background-color: rgb(234, 240, 255);');
+            // Lightning lights the stage behind the clock, not the
+            // whole room: a soft flash, never a full-screen white.
+            const flash = makeSoftEllipse(W * 0.55, H * 0.42, '234, 240, 255', '0.55');
+            flash.set_position(Math.round(W * 0.5 - W * 0.55), Math.round(H * 0.26 - H * 0.42));
+            flash.opacity = 0;
             actor.add_child(flash);
             layer.flash = flash;
         }
@@ -807,8 +1000,8 @@ class AtmosphereGroup extends Clutter.Actor {
         const gust = scene.category === 'storm'
             ? 0.75 + 0.45 * Math.sin(t * 0.7) * Math.sin(t * 0.23 + 1.7) : 1;
         for (const layer of this._layers) {
-            const {monitor: mon, actor} = layer;
-            const W = mon.width, H = mon.height;
+            const {stage, roofLocal: roof} = layer;
+            const W = stage.w, H = stage.h;
             const wrapX = (x, rx) => ((x + rx) % (W + 2 * rx) + W + 2 * rx) % (W + 2 * rx) - rx;
             for (const s of layer.shadows)
                 s.a.set_position(Math.round(wrapX(s.x0 + t * s.vx * gust, s.rx) - s.rx), Math.round(s.y - s.ry));
@@ -825,26 +1018,60 @@ class AtmosphereGroup extends Clutter.Actor {
             const sky = this._skies?.[layer.index];
             for (const c of layer.clouds) {
                 const x = wrapX(c.x0 + t * c.vx, c.rx * 1.8);
-                const maxY = sky ? sky.horizonAt(clamp(x, 0, W - 1)) - c.ry * 0.7 : H * 0.3;
+                const horizon = sky
+                    ? sky.horizonAt(clamp(x + stage.x, 0, layer.monitor.width - 1)) - stage.y
+                    : H * 0.3;
+                const maxY = horizon - c.ry * 0.7;
                 c.a.set_position(Math.round(x - c.rx), Math.round(Math.min(c.y, Math.max(c.ry, maxY)) - c.ry));
             }
             for (const f of layer.fogs)
                 f.a.set_position(Math.round(wrapX(f.x0 + t * f.vx, f.rx) - f.rx), Math.round(f.y - f.ry));
             const slantPx = scene.slant * gust;
-            for (const d of layer.rain) {
-                const f = frac(t / LOOP_S * d.rate + d.phase);
-                const y = -d.len + f * (H + 2 * d.len);
-                const x = d.x0 + slantPx * y;
-                d.a.set_position(Math.round(((x % (W + 80)) + W + 80) % (W + 80) - 40), Math.round(y));
-                d.a.opacity = Math.round(d.peak * envelope(f));
-            }
-            for (const fl of layer.snow) {
-                const f = frac(t / LOOP_S * fl.rate + fl.phase);
-                const y = -fl.r * 2 + f * (H + fl.r * 4);
-                const x = fl.x0 + Math.sin(f * TAU + fl.phase * TAU) * fl.swayAmp + slantPx * y * 0.35;
-                fl.a.set_position(Math.round(((x % (W + 40)) + W + 40) % (W + 40) - 20), Math.round(y));
-                fl.a.rotation_angle_z = f * 360 * fl.spin;
-                fl.a.opacity = Math.round(fl.peak * envelope(f, 0.08, 0.9));
+            if (roof) {
+                for (const d of layer.rain) {
+                    const f = frac(t / LOOP_S * d.rate + d.phase);
+                    const s = f * d.total;
+                    let x, y, rot = layer.angleDeg;
+                    if (!d.hit || s < d.s1) {
+                        y = -d.len + s;
+                        x = d.x0 + slantPx * s;
+                    } else if (s < d.s2) {
+                        // Splash flat, then roll along the roof.
+                        x = d.xAtRoof + d.rollDir * (s - d.s1) * 0.45;
+                        y = roof.y - 1;
+                        rot = 90;
+                    } else {
+                        const ds = s - d.s2;
+                        y = roof.y + ds;
+                        x = d.cornerX + d.rollDir * 3 + slantPx * ds * 0.5;
+                    }
+                    const squash = d.hit && s >= d.s1 && s < d.s1 + 14;
+                    if (squash !== d._sq) {
+                        d.a.set_scale(squash ? 1.6 : 1, squash ? 0.35 : 1);
+                        d._sq = squash;
+                    }
+                    d.a.rotation_angle_z = rot;
+                    d.a.set_position(Math.round(((x % (W + 80)) + W + 80) % (W + 80) - 40), Math.round(y));
+                    d.a.opacity = Math.round(d.peak * envelope(f));
+                }
+                for (const fl of layer.snow) {
+                    const f = frac(t / LOOP_S * fl.rate + fl.phase);
+                    const s = f * fl.total;
+                    if (fl.hit && s >= fl.s1) {
+                        // Settled on the roof: sit, then melt away.
+                        const melt = clamp((s - fl.s1) / fl.stickS, 0, 1);
+                        fl.a.set_position(Math.round(fl.stickX), Math.round(roof.y - fl.r * 0.6));
+                        fl.a.opacity = Math.round(fl.peak * (1 - 0.9 * melt));
+                    } else {
+                        const y = -fl.r * 2 + s;
+                        const x = fl.x0 +
+                            Math.sin(s / (140 * clamp(layer.monitor.height / 1080, 0.75, 2.2)) + fl.phase * TAU) * fl.swayAmp +
+                            slantPx * s * 0.35;
+                        fl.a.set_position(Math.round(((x % (W + 40)) + W + 40) % (W + 40) - 20), Math.round(y));
+                        fl.a.rotation_angle_z = f * 360 * fl.spin;
+                        fl.a.opacity = Math.round(fl.peak * envelope(f, 0.08, 0.9));
+                    }
+                }
             }
             if (layer.flash) {
                 const c = t % STRIKE_CYCLE;
@@ -854,9 +1081,8 @@ class AtmosphereGroup extends Clutter.Actor {
                     if (dt >= 0 && dt < 1.2)
                         level = Math.max(level, Math.exp(-dt * 9));
                 }
-                layer.flash.opacity = Math.round(82 * level);
+                layer.flash.opacity = Math.round(150 * level);
             }
-            void actor;
         }
     }
 });

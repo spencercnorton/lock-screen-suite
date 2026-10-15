@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>A lock screen worth looking at: your wallpapers, a big clock and the weather.</strong><br>
-  A GNOME Shell extension that gives the lock screen a wallpaper per monitor with blur and dim, its own clock layout, and a full-screen weather atmosphere: when it rains, the lock screen rains.
+  A GNOME Shell extension that gives the lock screen a wallpaper per monitor with blur and dim, its own clock layout, and a weather atmosphere that lives around the clock: when it rains, the clock gets rained on.
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ Lock Screen Suite restyles GNOME Shell's unlock dialog without replacing it: GNO
 
 **Its own clock.** Twelve- or 24-hour time with optional seconds and date, in the size, weight, colour, letter spacing and date format you choose.
 
-**The current weather, as weather.** Rain slanted by the real wind, drifting snow, ground fog, clouds crossing the sky of your wallpaper and shadows crossing its land, and at night a starfield with the moon at its current phase — across every monitor, behind the clock. Sky is detected in the wallpaper itself, so stars never land on trees and a forest wallpaper simply stays dark; the wallpaper is also graded for the condition, and dimmed at night by an amount measured from its own sky. Under the clock, one slim line keeps the numbers: a symbolic icon, the temperature, the condition, and today's high and low. Refreshed on an interval you set, from [Open-Meteo](https://open-meteo.com/). The last result is cached, so the lock screen has something to show as soon as the machine wakes, and locking again within the interval makes no new request. The weather appears once you have chosen a place.
+**The current weather, as weather.** Rain slanted by the real wind splashes on the clock cluster's roof, rolls to a corner, and drips off; snow settles on that roof and melts; fog gathers at its base; clouds and their shadows drift behind and above it; and at night a starfield with the moon at its current phase fills the sky around it — all in a bounded stage around the clock on the primary monitor, between the wallpaper and the clock. Sky is detected in the wallpaper itself, inside that stage, so stars never land on trees and a forest wallpaper simply stays dark; the wallpaper is also graded for the condition, and dimmed at night by an amount measured from its own sky. Under the clock, one slim line keeps the numbers: a symbolic icon, the temperature, the condition, and today's high and low. Refreshed on an interval you set, from [Open-Meteo](https://open-meteo.com/). The last result is cached, so the lock screen has something to show as soon as the machine wakes, and locking again within the interval makes no new request. The weather appears once you have chosen a place.
 
 **Your location stays yours.** The weather is fetched only for a place you pick from a search in the preferences, or for latitude and longitude you enter. The extension never looks your location up by itself, and the lock screen makes no request other than the forecast.
 
