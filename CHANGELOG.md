@@ -2,7 +2,7 @@
 
 All notable changes to Lock Screen Suite are documented here.
 
-## Unreleased
+## 2.2.0 — 2026-10-15
 
 - The atmosphere moves in with the clock. Instead of a full-screen layer on every monitor, the weather now lives in a bounded stage around the clock cluster on the primary monitor, and the cluster itself is an invisible box in the scene: rain splashes on its roof, rolls to a corner, and drips off; snow settles on the roof and melts; clouds and their shadows drift behind and above it; fog gathers at its base; lightning lights the stage rather than the whole room. Sky placement (stars, moon, glow, clouds) is now sampled inside the stage's own rectangle. Other monitors keep the graded wallpaper only.
 - Waking to the password prompt no longer lags behind the weather: the per-frame redraw damages only the stage rectangle instead of every monitor, particle counts drop by roughly an order of magnitude, positions update at 30fps, and the animation loop pauses outright while the prompt is up.
