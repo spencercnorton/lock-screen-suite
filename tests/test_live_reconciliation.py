@@ -30,7 +30,7 @@ class LiveReconciliationTests(unittest.TestCase):
         body = body[: body.index("\n}\n")]
 
         # Starts only once the actor has a stage, pauses while it is unmapped.
-        self.assertLess(body.index("if (actor.mapped && screenOn())"), body.index("timeline.start()"))
+        self.assertLess(body.index("if (actor.mapped && screenOn() && !frozen)"), body.index("timeline.start()"))
         self.assertIn("timeline.pause()", body)
         self.assertIn("actor.connect('notify::mapped'", body)
         # Stops when the actor is destroyed — and when layers are rebuilt
@@ -50,7 +50,7 @@ class LiveReconciliationTests(unittest.TestCase):
         body = body[: body.index("\n}\n")]
         # The unlock dialog stays mapped while GNOME blanks the screen, so
         # `mapped` alone kept a timeline running flat out behind dark monitors.
-        self.assertIn("if (actor.mapped && screenOn())", body)
+        self.assertIn("if (actor.mapped && screenOn() && !frozen)", body)
         self.assertIn("unwatchScreen();", body)
         screen = (ROOT / "screen.js").read_text()
         watch = screen[screen.index("export function watchScreen"):]
@@ -68,8 +68,14 @@ class LiveReconciliationTests(unittest.TestCase):
         # A frame with nothing drawn is not paced by the display, so a slow
         # particle that rounds to the same pixel would spin the main loop
         # at a full core. Positions may be applied at a capped rate, but a
-        # redraw must still be queued every frame.
+        # redraw must still be queued every frame — on the bounded stage
+        # actor, so the damage is the clock's rectangle, not every
+        # monitor. The stage-wide version lagged the wake transition.
         self.assertIn("actor.queue_redraw()", frame)
+        build = ATMOSPHERE[ATMOSPHERE.index("    _buildLayers() {"):]
+        build = build[: build.index("\n    }\n")]
+        self.assertIn("loopSeconds(actor, ", build)
+        self.assertNotIn("loopSeconds(this, ", build)
 
     def test_the_clock_does_not_redraw_behind_dark_monitors(self) -> None:
         tick = CLOCK[CLOCK.index("    _scheduleNextTick() {"):]
